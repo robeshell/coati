@@ -1,0 +1,116 @@
+/* 用量分析共享样式：卡片壳 + 排行行。
+   数值与占比右对齐并使用等宽数字，保证多行之间不参差。 */
+
+.usage-analytics-card { min-width: 0; }
+
+.usage-analytics-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usage-empty { height: 236px; display: flex; flex-direction: column; justify-content: center; }
+
+.usage-rank {
+  display: grid;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.usage-rank__empty {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--semi-color-text-2);
+  font-size: 13px;
+}
+
+.usage-rank__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 46px;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 8px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+/* 占比条：::before 是轨道，行内 <i> 是填充，后者在文档流之后所以自然盖在上面。 */
+.usage-rank__row::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--semi-color-fill-0);
+}
+
+.usage-rank__row:hover:not(:disabled) { background: var(--semi-color-fill-0); }
+.usage-rank__row:focus-visible { outline: 2px solid var(--semi-color-focus-border); outline-offset: -2px; }
+.usage-rank__row:disabled { cursor: default; }
+.usage-rank__row.is-active { background: var(--semi-color-primary-light-default); }
+.usage-rank__row.is-active .usage-rank__name { color: var(--semi-color-primary); font-weight: 600; }
+
+.usage-rank__index {
+  color: var(--semi-color-text-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.usage-rank__name {
+  overflow: hidden;
+  color: var(--semi-color-text-0);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-rank__value {
+  color: var(--semi-color-text-1);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-rank__share {
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.usage-rank__bar {
+  position: absolute;
+  left: 8px;
+  bottom: 3px;
+  height: 3px;
+  max-width: calc(100% - 16px);
+  border-radius: 2px;
+  background: var(--semi-color-primary);
+  opacity: .5;
+}
+
+.usage-rank__row.is-active .usage-rank__bar { opacity: 1; }
+
+/* 侧栏窄卡（个人看板）用更紧的列宽，避免模型名被压成省略号。 */
+.usage-rank--compact .usage-rank__row {
+  grid-template-columns: 14px minmax(0, 1fr) auto 40px;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.usage-rank--compact .usage-rank__value { font-size: 11px; }
+.usage-rank--compact .usage-rank__share { font-size: 11px; }

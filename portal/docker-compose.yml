@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: coati
+      POSTGRES_USER: coati
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coati -d coati"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:5000"
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://coati:${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}@db/coati
+      SECRET_KEY: ${SECRET_KEY:?请设置 SECRET_KEY}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置 ADMIN_PASSWORD}
+      # 上游凭证独立加密密钥（生产必填，缺失则拒绝启动）
+      AGENT_CREDENTIAL_ENCRYPTION_KEY: ${AGENT_CREDENTIAL_ENCRYPTION_KEY:?请设置 AGENT_CREDENTIAL_ENCRYPTION_KEY}
+      # 只读账号密码（docker-entrypoint 会用它创建 coati_ro，用于 AI SQL）
+      POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?请设置 POSTGRES_RO_PASSWORD}
+      # AI SQL 专用只读连接（必须指向非超级用户只读账号，禁止回退到主库超级用户）
+      AI_SQL_DATABASE_URL: postgresql://coati_ro:${POSTGRES_RO_PASSWORD}@db/coati
+      # 定时任务（多 worker 时建议 false，由独立进程跑）
+      ENABLE_TASK_SCHEDULER: ${ENABLE_TASK_SCHEDULER:-true}
+      RUN_SCHEDULER_IN_WEB: ${RUN_SCHEDULER_IN_WEB:-true}
+      # AI（可选，不填则 AI 功能不可用）
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_API_BASE: ${AI_API_BASE:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AGENT_DAILY_TOKEN_QUOTA: ${AGENT_DAILY_TOKEN_QUOTA:-0}
+      AGENT_MIN_CLI_VERSION: ${AGENT_MIN_CLI_VERSION:-0.1.0}
+      AGENT_PLUGIN_ALLOWLIST: ${AGENT_PLUGIN_ALLOWLIST:-}
+      AGENT_DESKTOP_UPDATE_URL: ${AGENT_DESKTOP_UPDATE_URL:-}
+      AGENT_DESKTOP_RELEASE_API_BASE: ${AGENT_DESKTOP_RELEASE_API_BASE:-}
+      AGENT_DESKTOP_RELEASE_IDENTIFIER: ${AGENT_DESKTOP_RELEASE_IDENTIFIER:-}
+      AGENT_DESKTOP_RELEASE_TEMPLATE: ${AGENT_DESKTOP_RELEASE_TEMPLATE:-electron.json}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # 持久化上传文件（如有）
+      - app_instance:/app/instance
+
+volumes:
+  postgres_data:
+  app_instance:

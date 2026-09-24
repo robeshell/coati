@@ -1,0 +1,74 @@
+# coati · 服务器运行版编排（外接 PostgreSQL）
+#
+# 这个文件只引用镜像，不包含 build context。
+# 适合服务器上已经有 PostgreSQL 的部署方式，通过 DATABASE_URL 连接已有实例。
+# 服务器只需要本文件、.env 和 Docker 镜像，不需要项目源码。
+
+x-portal-env: &portal-env
+  FLASK_ENV: production
+  DATABASE_URL: ${DATABASE_URL:?must set DATABASE_URL in .env}
+  SECRET_KEY: ${SECRET_KEY:?must set SECRET_KEY in .env}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?must set ADMIN_PASSWORD in .env}
+  # 上游凭证独立加密密钥（生产必填，缺失则拒绝启动）
+  AGENT_CREDENTIAL_ENCRYPTION_KEY: ${AGENT_CREDENTIAL_ENCRYPTION_KEY:?must set AGENT_CREDENTIAL_ENCRYPTION_KEY in .env}
+
+  # AI SQL 只读账号：run_setup_once 会用 DATABASE_URL（主库）创建 coati_ro
+  POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:-}
+  # AI SQL 专用只读连接（生产必填，指向非超级用户只读账号）
+  AI_SQL_DATABASE_URL: ${AI_SQL_DATABASE_URL:?must set AI_SQL_DATABASE_URL in .env}
+  AI_SQL_STATEMENT_TIMEOUT_MS: ${AI_SQL_STATEMENT_TIMEOUT_MS:-5000}
+
+  # 定时任务（由独立 scheduler 服务执行，web 进程内关闭）
+  ENABLE_TASK_SCHEDULER: ${ENABLE_TASK_SCHEDULER:-true}
+  RUN_SCHEDULER_IN_WEB: ${RUN_SCHEDULER_IN_WEB:-false}
+  TASK_SCHEDULER_INTERVAL_SECONDS: ${TASK_SCHEDULER_INTERVAL_SECONDS:-20}
+  TASK_SCHEDULER_LEASE_SECONDS: ${TASK_SCHEDULER_LEASE_SECONDS:-1800}
+
+  # AI（可选，不填则 AI 功能不可用）
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_API_BASE: ${AI_API_BASE:-}
+  AI_MODEL: ${AI_MODEL:-}
+
+  # Agent 平台
+  AGENT_DAILY_TOKEN_QUOTA: ${AGENT_DAILY_TOKEN_QUOTA:-0}
+  AGENT_MIN_CLI_VERSION: ${AGENT_MIN_CLI_VERSION:-0.1.0}
+  AGENT_PLUGIN_ALLOWLIST: ${AGENT_PLUGIN_ALLOWLIST:-}
+  AGENT_PUBLIC_API_BASE: ${AGENT_PUBLIC_API_BASE:-}
+
+  # 会话安全
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-8}
+
+services:
+  portal:
+    image: "${IMAGE_REPOSITORY:-coati}/portal:${IMAGE_TAG:?must set IMAGE_TAG in .env}"
+    restart: unless-stopped
+    environment:
+      <<: *portal-env
+    ports:
+      - "${PORTAL_PORT:-8080}:5000"
+    volumes:
+      - app_instance:/app/instance
+    networks: [internal]
+
+  scheduler:
+    image: "${IMAGE_REPOSITORY:-coati}/portal:${IMAGE_TAG:?must set IMAGE_TAG in .env}"
+    restart: unless-stopped
+    depends_on:
+      - portal
+    command: ["python3", "-m", "backend.scripts.run_scheduler_worker"]
+    healthcheck:
+      disable: true
+    environment:
+      <<: *portal-env
+      RUN_SCHEDULER_IN_WEB: "false"
+    volumes:
+      - app_instance:/app/instance
+    networks: [internal]
+
+volumes:
+  app_instance:
+
+networks:
+  internal:
+    driver: bridge

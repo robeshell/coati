@@ -1,0 +1,176 @@
+/* 缓存命中率测试页 */
+.cache-test-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.8fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.cache-test-form.semi-card,
+.cache-test-result.semi-card,
+.cache-test-history.semi-card {
+  border-radius: 14px;
+  border-color: var(--semi-color-border);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+}
+
+.cache-test-form.semi-card .semi-card-header,
+.cache-test-result.semi-card .semi-card-header,
+.cache-test-history.semi-card .semi-card-header {
+  padding: 18px 20px 14px;
+}
+
+.cache-test-form.semi-card .semi-card-body,
+.cache-test-result.semi-card .semi-card-body,
+.cache-test-history.semi-card .semi-card-body {
+  padding: 0 20px 20px;
+}
+
+.cache-test-form__intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 12px 13px;
+  border: 1px solid var(--semi-color-primary-light-default);
+  border-radius: 10px;
+  background: var(--semi-color-primary-light-default);
+}
+
+.cache-test-form__intro-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--semi-color-primary);
+  box-shadow: 0 0 0 4px var(--semi-color-primary-light-hover);
+}
+
+.cache-test-form__intro .semi-typography-paragraph {
+  margin: 3px 0 0;
+  line-height: 1.55;
+}
+
+.cache-test-form__field {
+  margin-bottom: 14px;
+}
+
+.cache-test-form__field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--semi-color-text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cache-test-form__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.cache-test-form__tip {
+  margin-top: 14px;
+}
+
+.cache-test-form__counter {
+  margin-top: 5px;
+  color: var(--semi-color-text-3);
+  font-size: 12px;
+  text-align: right;
+}
+
+.cache-test-main {
+  min-width: 0;
+}
+
+.cache-test-empty {
+  min-height: 240px;
+}
+
+.cache-test-empty.semi-card {
+  border-style: dashed;
+  border-radius: 14px;
+  background: var(--semi-color-fill-0);
+}
+
+.cache-test-empty__inner {
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--semi-color-text-2);
+}
+
+.cache-test-result__title {
+  font-weight: 600;
+}
+
+.cache-test-result__time {
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+}
+
+.cache-test-result .semi-banner {
+  margin-bottom: 10px;
+  border-radius: 10px;
+}
+
+.cache-test-result .app-stat-group {
+  margin: 14px 0 16px;
+}
+
+.cache-test-token-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--semi-color-fill-0);
+  font-size: 13px;
+}
+
+.cache-test-round-table {
+  margin-top: 8px;
+}
+
+.cache-test-history__search {
+  width: min(100%, 320px);
+  margin-bottom: 12px;
+}
+
+.cache-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+@media (max-width: 1080px) {
+  .cache-test-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .cache-test-form.semi-card .semi-card-header,
+  .cache-test-result.semi-card .semi-card-header,
+  .cache-test-history.semi-card .semi-card-header {
+    padding: 15px 14px 12px;
+  }
+
+  .cache-test-form.semi-card .semi-card-body,
+  .cache-test-result.semi-card .semi-card-body,
+  .cache-test-history.semi-card .semi-card-body {
+    padding: 0 14px 14px;
+  }
+
+  .cache-test-form__row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

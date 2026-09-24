@@ -1,0 +1,109 @@
+# coati · 内置 PostgreSQL 运行版编排
+#
+# 这个文件只引用镜像，不包含 build context。
+# 适合服务器上还没有 PostgreSQL、需要编排自带数据库的部署方式。
+# 服务器只需要本文件、.env 和 Docker 镜像，不需要项目源码。
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-coati}
+      POSTGRES_USER: ${POSTGRES_USER:-coati}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coati} -d ${POSTGRES_DB:-coati}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  portal:
+    image: "${IMAGE_REPOSITORY:-coati}/portal:${IMAGE_TAG:?must set IMAGE_TAG in .env}"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coati}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coati}
+      SECRET_KEY: ${SECRET_KEY:?must set SECRET_KEY in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?must set ADMIN_PASSWORD in .env}
+      AGENT_CREDENTIAL_ENCRYPTION_KEY: ${AGENT_CREDENTIAL_ENCRYPTION_KEY:?must set AGENT_CREDENTIAL_ENCRYPTION_KEY in .env}
+
+      POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?must set POSTGRES_RO_PASSWORD in .env}
+      AI_SQL_DATABASE_URL: postgresql://coati_ro:${POSTGRES_RO_PASSWORD}@postgres:5432/${POSTGRES_DB:-coati}
+      AI_SQL_STATEMENT_TIMEOUT_MS: ${AI_SQL_STATEMENT_TIMEOUT_MS:-5000}
+
+      ENABLE_TASK_SCHEDULER: ${ENABLE_TASK_SCHEDULER:-true}
+      RUN_SCHEDULER_IN_WEB: ${RUN_SCHEDULER_IN_WEB:-false}
+      TASK_SCHEDULER_INTERVAL_SECONDS: ${TASK_SCHEDULER_INTERVAL_SECONDS:-20}
+      TASK_SCHEDULER_LEASE_SECONDS: ${TASK_SCHEDULER_LEASE_SECONDS:-1800}
+
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_API_BASE: ${AI_API_BASE:-}
+      AI_MODEL: ${AI_MODEL:-}
+
+      AGENT_DAILY_TOKEN_QUOTA: ${AGENT_DAILY_TOKEN_QUOTA:-0}
+      AGENT_MIN_CLI_VERSION: ${AGENT_MIN_CLI_VERSION:-0.1.0}
+      AGENT_PLUGIN_ALLOWLIST: ${AGENT_PLUGIN_ALLOWLIST:-}
+      AGENT_PUBLIC_API_BASE: ${AGENT_PUBLIC_API_BASE:-}
+
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-8}
+    ports:
+      - "${PORTAL_PORT:-8080}:5000"
+    volumes:
+      - app_instance:/app/instance
+    networks: [internal]
+
+  scheduler:
+    image: "${IMAGE_REPOSITORY:-coati}/portal:${IMAGE_TAG:?must set IMAGE_TAG in .env}"
+    restart: unless-stopped
+    depends_on:
+      portal:
+        condition: service_started
+    command: ["python3", "-m", "backend.scripts.run_scheduler_worker"]
+    healthcheck:
+      disable: true
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coati}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coati}
+      SECRET_KEY: ${SECRET_KEY:?must set SECRET_KEY in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?must set ADMIN_PASSWORD in .env}
+      AGENT_CREDENTIAL_ENCRYPTION_KEY: ${AGENT_CREDENTIAL_ENCRYPTION_KEY:?must set AGENT_CREDENTIAL_ENCRYPTION_KEY in .env}
+
+      POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?must set POSTGRES_RO_PASSWORD in .env}
+      AI_SQL_DATABASE_URL: postgresql://coati_ro:${POSTGRES_RO_PASSWORD}@postgres:5432/${POSTGRES_DB:-coati}
+      AI_SQL_STATEMENT_TIMEOUT_MS: ${AI_SQL_STATEMENT_TIMEOUT_MS:-5000}
+
+      ENABLE_TASK_SCHEDULER: ${ENABLE_TASK_SCHEDULER:-true}
+      RUN_SCHEDULER_IN_WEB: "false"
+      TASK_SCHEDULER_INTERVAL_SECONDS: ${TASK_SCHEDULER_INTERVAL_SECONDS:-20}
+      TASK_SCHEDULER_LEASE_SECONDS: ${TASK_SCHEDULER_LEASE_SECONDS:-1800}
+
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_API_BASE: ${AI_API_BASE:-}
+      AI_MODEL: ${AI_MODEL:-}
+
+      AGENT_DAILY_TOKEN_QUOTA: ${AGENT_DAILY_TOKEN_QUOTA:-0}
+      AGENT_MIN_CLI_VERSION: ${AGENT_MIN_CLI_VERSION:-0.1.0}
+      AGENT_PLUGIN_ALLOWLIST: ${AGENT_PLUGIN_ALLOWLIST:-}
+      AGENT_PUBLIC_API_BASE: ${AGENT_PUBLIC_API_BASE:-}
+
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-8}
+    volumes:
+      - app_instance:/app/instance
+    networks: [internal]
+
+volumes:
+  postgres_data:
+  app_instance:
+
+networks:
+  internal:
+    driver: bridge

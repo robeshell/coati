@@ -1,0 +1,2 @@
+.route-model-flow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.route-model-flow .semi-icon { flex: none; color: var(--semi-color-text-2); }

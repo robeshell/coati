@@ -1,0 +1,5 @@
+.animated-number {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

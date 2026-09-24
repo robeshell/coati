@@ -1,0 +1,157 @@
+.device-confirm-page {
+  display: grid;
+  min-height: calc(100vh - 128px);
+  padding: 40px 16px;
+  place-items: center;
+}
+
+.device-confirm-card {
+  width: min(480px, 100%);
+}
+
+.device-confirm-card__body { padding: 36px; }
+
+.device-confirm-heading,
+.device-confirm-success {
+  text-align: center;
+}
+
+.device-confirm-heading__icon,
+.device-confirm-success__icon {
+  display: inline-flex;
+  margin: 0 auto 16px;
+  color: var(--semi-color-primary);
+  font-size: 26px;
+}
+
+.device-confirm-heading__icon { display: flex; justify-content: center; }
+
+.device-confirm-kicker.semi-typography {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--semi-color-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+}
+
+.device-confirm-heading .semi-typography-h3,
+.device-confirm-success .semi-typography-h3 {
+  margin: 0 0 8px;
+}
+
+.device-confirm-heading > .semi-typography-tertiary,
+.device-confirm-success > .semi-typography-tertiary {
+  display: block;
+  line-height: 1.7;
+}
+
+.device-confirm-form {
+  margin-top: 28px;
+}
+
+.device-confirm-form .semi-form-field {
+  padding: 0;
+}
+
+.device-confirm-form .semi-form-field-label {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.device-confirm-code-input .semi-input-wrapper {
+  height: 56px;
+  border-radius: 9px;
+  background: var(--semi-color-fill-0);
+}
+
+.device-confirm-code-input input {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.device-confirm-account {
+  margin-top: 16px;
+  padding: 11px 13px;
+}
+
+.device-confirm-account strong {
+  color: var(--semi-color-text-0);
+}
+
+.device-confirm-warning {
+  margin: 12px 0 20px;
+}
+
+.device-confirm-warning .semi-icon {
+  flex: 0 0 auto;
+}
+
+.device-confirm-warning code {
+  color: inherit;
+  font-size: 12px;
+}
+
+.device-confirm-form .semi-button,
+.device-confirm-success .semi-button {
+  height: 44px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.device-confirm-permission {
+  display: block;
+  margin: 10px 0 0;
+  font-size: 12px;
+  text-align: center;
+}
+
+.device-confirm-footer {
+  margin-top: 18px;
+  color: var(--semi-color-text-3);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.device-confirm-success__icon {
+  color: var(--semi-color-success);
+  display: flex;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.device-confirm-success code {
+  display: block;
+  width: fit-content;
+  margin: 20px auto;
+  padding: 8px 13px;
+  border-radius: 7px;
+  color: var(--semi-color-text-1);
+  background: var(--semi-color-fill-0);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+}
+
+@media (max-width: 560px) {
+  .device-confirm-page {
+    min-height: calc(100vh - 104px);
+    padding: 20px 0;
+    place-items: start center;
+  }
+
+  .device-confirm-card {
+    border-radius: 12px;
+  }
+
+  .device-confirm-card__body { padding: 28px 20px; }
+
+  .device-confirm-code-input input {
+    font-size: 18px;
+  }
+}

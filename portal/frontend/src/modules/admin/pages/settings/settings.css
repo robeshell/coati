@@ -1,0 +1,48 @@
+/* 系统设置页 —— 样式与门户卡片体系保持一致（Semi Design token） */
+
+.settings-page__header {
+  margin-bottom: 16px;
+}
+
+.settings-page__title {
+  margin: 0;
+}
+
+/* Tab 切换布局 */
+.settings-tabs .semi-tabs-content {
+  padding-top: 16px;
+}
+
+/* 顶部小字号辅助提示（替代大 Banner） */
+.settings-page__hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.settings-page__hint-icon {
+  flex: none;
+}
+
+/* 表单字段列：桌面端单栏限宽，避免字段过长 */
+.settings-fields {
+  max-width: 640px;
+}
+
+/* 底部操作栏：撑满卡片宽度、与字段区分隔，按钮右对齐到卡片右缘 */
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 14px;
+  margin-top: 8px;
+  border-top: 1px solid var(--semi-color-border);
+}
+
+@media (max-width: 768px) {
+  .settings-footer .semi-button {
+    width: 100%;
+  }
+}
