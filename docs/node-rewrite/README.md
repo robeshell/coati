@@ -44,7 +44,7 @@ Manual deployment: fill the required production variables in `.env.production`, 
 docker compose --env-file .env.production up -d --build
 ```
 
-Initialization runs migrations and incremental RBAC seeding under a PostgreSQL advisory lock. Do not put Node's `DATABASE_URL` on an existing Python database. `GATEWAY_ENCRYPTION_KEY`, `SECRET_KEY`, `ADMIN_PASSWORD`, and `POSTGRES_PASSWORD` are all required by Compose. The image runs as a non-root user.
+Initialization runs migrations and incremental RBAC seeding under a PostgreSQL advisory lock. The root `pnpm seed:rbac` command also defaults to incremental synchronization. Do not put Node's `DATABASE_URL` on an existing Python database. `GATEWAY_ENCRYPTION_KEY`, `SECRET_KEY`, `ADMIN_PASSWORD`, and `POSTGRES_PASSWORD` are all required by Compose. The image runs as a non-root user.
 
 ## Verification
 

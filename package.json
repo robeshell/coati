@@ -15,7 +15,7 @@
     "test": "pnpm -r --if-present test",
     "db:generate": "pnpm --filter @coati/api db:generate",
     "db:migrate": "pnpm --filter @coati/api db:migrate",
-    "seed:rbac": "pnpm --filter @coati/api seed:rbac",
+    "seed:rbac": "pnpm --filter @coati/api seed:rbac -- --incremental",
     "setup-once": "pnpm --filter @coati/api setup-once",
     "openapi:generate": "pnpm --filter @coati/api openapi:generate",
     "openapi:apifox": "pnpm --filter @coati/api openapi:apifox",

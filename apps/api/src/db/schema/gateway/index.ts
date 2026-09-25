@@ -76,6 +76,7 @@ export const gw_requests = pgTable(
   (t) => [
     index('gw_requests_key_time_idx').on(t.key_id, t.created_at),
     index('gw_requests_status_expiry_idx').on(t.status, t.expires_at),
+    index('gw_requests_created_at_idx').on(t.created_at),
   ],
 )
 export const gw_attempts = pgTable('gw_attempts', {
@@ -90,7 +91,7 @@ export const gw_attempts = pgTable('gw_attempts', {
   error: text(),
   duration_ms: integer().notNull(),
   created_at: at(),
-})
+}, t => [index('gw_attempts_request_idx').on(t.request_id)])
 export const gw_devices = pgTable('gw_devices', {
   id: serial().primaryKey(),
   device_hash: text().notNull().unique(),

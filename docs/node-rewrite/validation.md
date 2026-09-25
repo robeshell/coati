@@ -12,7 +12,7 @@ This record describes the preview branch, not production acceptance. Stable Coat
 | Gateway gate | 35 passed across gateway, migration-chain and bootstrap suites; scoped gateway ESLint passed |
 | Gateway-specific tests | 27 passed: admin configuration → request → usage, 3 native SSE protocols, cookie/bearer isolation, key revocation/model allowlist, concurrent quota reservation, one-time device redemption, split UTF-8/events, truncated streams, real socket disconnect, idle timeout, 503 failover, private/mapped addresses, malformed requests and settlement failure |
 | Builds | API + web builds passed; frontend retains a bundle-size warning for inherited administration/chart code |
-| Migrations | Fresh database bootstrap exercised by tests; isolated `coati_node_dev` migrated through `0002_gateway` and gateway tables confirmed |
+| Migrations | Fresh database bootstrap exercised by tests; isolated `coati_node_dev` migrated through `0003_gateway_query_indexes`; gateway tables and both query indexes confirmed |
 | Container | Node 22 Debian image built and started against a fresh PostgreSQL 17 container; both healthy |
 | Container smoke | Real HTTP health, admin login/session, overview, SPA, bearer-only model access, JSON 404, and no bootstrap secrets in logs passed |
 | Browser | Login, overview/navigation, upstream form and required validation, device authorization page, logout/login return to authorization page verified on localhost |
@@ -21,6 +21,8 @@ This record describes the preview branch, not production acceptance. Stable Coat
 The full tests use a real isolated PostgreSQL database and a fake upstream. No real provider credentials or paid model calls were used. Browser checks did not submit a real provider key or authorize an external client. Real-provider, mobile, multi-replica and sustained slow-client acceptance remain outstanding.
 
 ## Initial Node performance baseline
+
+Measured gateway source: `c8913aa` (before the query-index follow-up).
 
 Command: `BENCH_DATABASE_URL=postgresql://localhost/postgres pnpm bench:gateway`. Raw results: [benchmark-node.json](benchmark-node.json).
 
