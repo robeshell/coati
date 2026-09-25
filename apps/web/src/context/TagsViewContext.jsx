@@ -6,7 +6,7 @@ import { STATIC_TITLES, findActiveMenu, flattenMenus, navigablePages } from '@/c
 /**
  * Tags view state: the pages the user has opened, shown as tabs under the top bar.
  * - A tab is keyed by pathname; fullPath keeps the last search string so switching back restores it
- * - Root-level pages (e.g. the dashboard) are affixed: always first, never closable
+ * - Only the dashboard is affixed: menu depth does not determine whether a tab is closable
  * - Only known pages (a menu or STATIC_TITLES) become tabs; the list lives in sessionStorage (per browser tab)
  * - versions[path] is bumped by refresh(); AppLayout keys the page on it to remount it
  */
@@ -28,7 +28,7 @@ export function TagsViewProvider({ children }) {
   const navigate = useNavigate()
   const flat = useMemo(() => flattenMenus(menus), [menus])
   const affixPaths = useMemo(
-    () => navigablePages(flat).filter((m) => m.parents.length === 0).map((m) => m.path),
+    () => navigablePages(flat).filter((m) => m.path === '/dashboard').map((m) => m.path),
     [flat],
   )
   const isKnown = useCallback((path) => Boolean(STATIC_TITLES[path] || findActiveMenu(flat, path)), [flat])

@@ -1,10 +1,12 @@
-/** Tags view state: tabs follow navigation, affixed root pages stay, closing moves to a neighbor */
+/** Tags view state: tabs follow navigation, the dashboard stays, closing moves to a neighbor */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { TagsViewProvider, useTagsView } from '@/context/TagsViewContext'
 
+const GATEWAY_PATHS = ['/gateway/upstreams', '/gateway/routes', '/gateway/keys', '/gateway/requests']
 const MENUS = [
+  ...GATEWAY_PATHS.map((path, i) => ({ id: 1000 + i, name: path, path, menu_type: 'menu', is_active: true, is_visible: true })),
   { id: 1, name: 'Home', path: '/dashboard', menu_type: 'menu', is_active: true, is_visible: true },
   {
     id: 2,
@@ -69,6 +71,30 @@ describe('tags view', () => {
     act(() => result.current.tags.closeAll())
     expect(paths(result)).toEqual(['/dashboard'])
     expect(result.current.location.pathname).toBe('/dashboard')
+  })
+
+  it('top-level gateway pages open on navigation and can all be closed', () => {
+    const { result } = setup()
+    expect(paths(result)).toEqual(['/dashboard'])
+    for (const path of GATEWAY_PATHS) act(() => result.current.navigate(path))
+    expect(paths(result)).toEqual(['/dashboard', ...GATEWAY_PATHS])
+    expect(result.current.tags.tabs.filter((tab) => tab.affix).map((tab) => tab.path)).toEqual(['/dashboard'])
+    act(() => result.current.tags.close('/gateway/requests'))
+    expect(result.current.location.pathname).toBe('/gateway/keys')
+    expect(paths(result)).not.toContain('/gateway/requests')
+    act(() => result.current.tags.closeAll())
+    expect(paths(result)).toEqual(['/dashboard'])
+    expect(result.current.location.pathname).toBe('/dashboard')
+  })
+
+  it('closing a restored top-level tab persists across remounts', () => {
+    sessionStorage.setItem('tags-view', JSON.stringify([{ path: '/gateway/routes', fullPath: '/gateway/routes?page=2' }]))
+    const { result, unmount } = setup('/gateway/routes?page=2')
+    act(() => result.current.tags.close('/gateway/routes'))
+    expect(result.current.location.pathname).toBe('/dashboard')
+    unmount()
+    const restored = setup()
+    expect(paths(restored.result)).toEqual(['/dashboard'])
   })
 
   it('refresh bumps the page version', () => {
