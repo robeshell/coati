@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  esbuild: true
+
+# A few apps/web sources import transitive deps directly (e.g. react-resizable/css pulled in by react-grid-layout).
+# npm's flat node_modules resolves them but pnpm's strict layout doesn't, so hoist them here instead of changing the sources.
+publicHoistPattern:
+  - react-resizable

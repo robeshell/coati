@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: coati
+      POSTGRES_USER: coati
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - node_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U coati -d coati]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    build: .
+    stop_grace_period: 210s
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${APP_PORT:-8080}:5000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://coati:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db/coati
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
+      GATEWAY_ENCRYPTION_KEY: ${GATEWAY_ENCRYPTION_KEY:?Set GATEWAY_ENCRYPTION_KEY}
+      GATEWAY_ALLOW_PRIVATE_UPSTREAMS: ${GATEWAY_ALLOW_PRIVATE_UPSTREAMS:-false}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      ENABLE_TASK_SCHEDULER: "false"
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - node_app_instance:/app/instance
+volumes:
+  node_postgres_data:
+  node_app_instance:

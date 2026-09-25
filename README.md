@@ -1,3 +1,5 @@
+> **Node.js 重写预览分支**：基于 castor-kit 的新版位于 `apps/api` 和 `apps/web`。运行方式、兼容范围和剩余迁移工作见 [Node 重写说明](docs/node-rewrite/README.md)。以下 `portal/` 文档保留为 Python 稳定版参考；新版尚未替代稳定版。
+
 <p align="center"><img src="portal/frontend/public/logo.png" width="80" alt="Coati"></p>
 
 # Coati

@@ -1,0 +1,199 @@
+import { safeReturnPath } from '@/lib/return-path'
+import { useState } from 'react'
+import { Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { motion } from 'motion/react'
+import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck, Sparkles, User } from 'lucide-react'
+import BrandMark from '@/components/app/BrandMark'
+import LanguageSwitcher from '@/components/app/LanguageSwitcher'
+import ThemeToggle from '@/components/app/ThemeToggle'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Spinner } from '@/components/ui/spinner'
+import { useAuth } from '@/context/AuthContext'
+import { toast } from '@/lib/toast'
+import { EASE_OUT } from '@/lib/motion'
+import { cn } from '@/lib/utils'
+import { login } from '@/modules/admin/api/auth'
+import LoginBackdrop, { LoginCardBorder } from '@/modules/auth/pages/login/LoginBackdrop'
+import { useAppInfo } from '@/shared/hooks/useAppInfo'
+import { useTranslation } from 'react-i18next'
+
+function Halo() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute -inset-x-40 -top-40 -bottom-24 -z-10">
+      <div className="absolute top-8 left-1/2 h-[380px] w-[560px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,color-mix(in_srgb,var(--brand-from)_18%,transparent),transparent)]" />
+      <div className="absolute top-24 left-[62%] h-[260px] w-[340px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,color-mix(in_srgb,var(--brand-to)_16%,transparent),transparent)]" />
+    </div>
+  )
+}
+
+/** Input with a leading icon */
+function IconInput({ icon: Icon, invalid, className, ...props }) {
+  return (
+    <div className="relative">
+      <Icon className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+      <Input aria-invalid={invalid} className={cn('h-10 pl-9', className)} {...props} />
+    </div>
+  )
+}
+
+export default function Login() {
+  const { t } = useTranslation()
+  const { user, login: setAuth, loading } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const returnTo = safeReturnPath(new URLSearchParams(location.search).get('returnTo'))
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [errors, setErrors] = useState({})
+  const [submitting, setSubmitting] = useState(false)
+  const appInfo = useAppInfo()
+  const demoAccount = appInfo?.demo_mode ? appInfo.demo_account : null
+
+  if (!loading && user) return <Navigate to={returnTo} replace />
+
+  const signIn = async (name, secret) => {
+    setSubmitting(true)
+    try {
+      const data = await login({ username: name, password: secret })
+      await setAuth(data.user)
+      toast.success('登录成功')
+      navigate(returnTo, {replace:true})
+    } catch (err) {
+      toast.apiError(err, '登录失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const submit = (event) => {
+    event.preventDefault()
+    const nextErrors = {}
+    if (!username.trim()) nextErrors.username = t('请输入用户名')
+    if (!password) nextErrors.password = t('请输入密码')
+    setErrors(nextErrors)
+    if (Object.keys(nextErrors).length) return
+    signIn(username, password)
+  }
+
+  /** Public demo: fill in the demo account and sign in with one click */
+  const demoSignIn = () => {
+    setUsername(demoAccount.username)
+    setPassword(demoAccount.password)
+    setErrors({})
+    signIn(demoAccount.username, demoAccount.password)
+  }
+
+  return (
+    <div className="bg-sidebar relative flex h-svh flex-col overflow-y-auto">
+      <LoginBackdrop />
+
+      <header className="relative flex items-center justify-between px-5 py-4 sm:px-8">
+        <BrandMark />
+        <div className="flex items-center gap-1">
+          <LanguageSwitcher />
+          <ThemeToggle />
+        </div>
+      </header>
+
+      <main className="relative flex flex-1 items-center justify-center px-4 py-10">
+        <motion.div
+          initial={{ opacity: 0, y: 14, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.5, ease: EASE_OUT }}
+          className="relative isolate w-full max-w-[400px]"
+        >
+          <Halo />
+          {/* Form card: the only visual focus of the page; frosted glass over the animated backdrop (login-backdrop.css) */}
+          <div className="login-glass relative overflow-hidden rounded-2xl px-7 pt-9 pb-7 sm:px-9">
+            <LoginCardBorder />
+            {/* A gradient highlight along the top edge adds a touch of brand */}
+            <div className="via-brand-via absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent to-transparent" />
+
+            <h1 className="text-center text-[22px] font-semibold tracking-tight">{t('登录')}</h1>
+
+            <form onSubmit={submit} className="mt-7 space-y-4" noValidate>
+              <div className="space-y-1.5">
+                <Label htmlFor="username" className="text-[13px]">
+                  {t('用户名')}
+                </Label>
+                <IconInput
+                  id="username"
+                  icon={User}
+                  autoComplete="username"
+                  autoFocus
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="admin"
+                  invalid={Boolean(errors.username)}
+                />
+                {errors.username ? <p className="text-destructive text-xs">{errors.username}</p> : null}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="password" className="text-[13px]">
+                  {t('密码')}
+                </Label>
+                <div className="relative">
+                  <IconInput
+                    id="password"
+                    icon={LockKeyhole}
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={t('请输入密码')}
+                    invalid={Boolean(errors.password)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? t('隐藏密码') : t('显示密码')}
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                {errors.password ? <p className="text-destructive text-xs">{errors.password}</p> : null}
+              </div>
+
+              <Button type="submit" variant="brand" disabled={submitting} className="group mt-2 h-10 w-full">
+                {submitting ? <Spinner /> : null}
+                {t('登录')}
+                {!submitting ? <ArrowRight className="transition-transform duration-200 group-hover:translate-x-0.5" /> : null}
+              </Button>
+            </form>
+
+            {demoAccount ? (
+              <div className="mt-6 border-t pt-5">
+                <div className="bg-brand-soft flex items-center gap-3 rounded-lg px-3.5 py-3">
+                  <Sparkles className="text-primary size-4 shrink-0" />
+                  <div className="min-w-0 flex-1 text-xs leading-relaxed">
+                    <div className="text-foreground font-medium">{t('演示账号')}</div>
+                    <div className="text-muted-foreground font-mono">
+                      {demoAccount.username} / {demoAccount.password}
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="h-8 shrink-0" disabled={submitting} onClick={demoSignIn}>
+                    {t('一键登录')}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-muted-foreground mt-6 flex items-center justify-center gap-1.5 border-t pt-5 text-xs">
+                <ShieldCheck className="size-3.5 shrink-0" />
+                <span>{t('默认管理员账号 admin，密码以部署配置为准')}</span>
+              </div>
+            )}
+          </div>
+
+        </motion.div>
+      </main>
+
+      <footer className="text-muted-foreground relative px-5 pb-6 text-center text-xs sm:px-8">© 2026 Coati</footer>
+    </div>
+  )
+}

@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/instance
+**/coverage
+portal
+.coati*
+*.log

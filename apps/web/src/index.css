@@ -1,0 +1,315 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Coati design system (docs/frontend-redesign-plan.md §3)
+ * Neutral gray base plus one accent (default Ocean: blue → sky → cyan); gradients are for accents only.
+ * The accent is switchable: presets at the bottom of this file only set --brand-from / --brand-via / --brand-to,
+ * and every accent-colored token (primary, ring, charts, soft / glow / shadow) derives from those three.
+ * All colors go through the CSS variables below; never hard-code hex values in pages.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  /* Pure neutral gray (no blue/purple cast): white content; the sidebar is a crisp cool off-white, and its selected item is a raised white chip rather than a darker gray block */
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: var(--brand-from);
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #0a0a0a;
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --accent: #f4f4f4;
+  --accent-foreground: #0a0a0a;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: #ebebeb;
+  --input: #e3e3e3;
+  --ring: var(--brand-from);
+
+  --success: #16a34a;
+  --success-soft: rgba(34, 197, 94, 0.12);
+  --warning: #d97706;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #dc2626;
+  --danger-soft: rgba(229, 72, 77, 0.1);
+  --info: #0284c7;
+  --info-soft: rgba(2, 132, 199, 0.1);
+
+  --chart-1: var(--brand-from);
+  --chart-2: var(--brand-via);
+  --chart-3: var(--brand-to);
+  --chart-4: #14b8a6;
+  --chart-5: #f59e0b;
+
+  --sidebar: #f7f8fa;
+  --sidebar-foreground: #404040;
+  --sidebar-primary: var(--brand-from);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ffffff;
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-border: #ebebeb;
+  --sidebar-ring: var(--brand-from);
+
+  /* Brand gradient: three-stop for decoration, two-stop (strong) for elements carrying white text */
+  --brand-from: #2563eb;
+  --brand-via: #0284c7;
+  --brand-to: #22d3ee;
+  --brand-gradient: linear-gradient(135deg, var(--brand-from) 0%, var(--brand-via) 55%, var(--brand-to) 100%);
+  --brand-gradient-strong: linear-gradient(135deg, var(--brand-from) 0%, var(--brand-via) 100%);
+  --brand-glow: color-mix(in srgb, var(--brand-via) 12%, transparent);
+  --brand-shadow: color-mix(in srgb, var(--brand-from) 45%, transparent);
+  --brand-soft: color-mix(in srgb, var(--brand-from) 8%, transparent);
+
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #f5f5f5;
+  --card: #111111;
+  --card-foreground: #f5f5f5;
+  --popover: #151515;
+  --popover-foreground: #f5f5f5;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #f5f5f5;
+  --muted: #1a1a1a;
+  --muted-foreground: #a3a3a3;
+  --accent: #1f1f1f;
+  --accent-foreground: #f5f5f5;
+  --destructive: #f25c61;
+  --destructive-foreground: #ffffff;
+  --border: #242424;
+  --input: #2c2c2c;
+
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.14);
+
+  --chart-4: #2dd4bf;
+  --chart-5: #fbbf24;
+
+  --sidebar: #0d0d0d;
+  --sidebar-foreground: #b5b5b5;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1f1f1f;
+  --sidebar-accent-foreground: #f5f5f5;
+  --sidebar-border: #1f1f1f;
+
+  --brand-from: #3b82f6;
+  --brand-via: #0ea5e9;
+  --brand-to: #22d3ee;
+  --brand-glow: color-mix(in srgb, var(--brand-via) 14%, transparent);
+  --brand-soft: color-mix(in srgb, var(--brand-from) 12%, transparent);
+}
+
+/*
+ * Accent presets (ids match ACCENTS in src/lib/appearance.js). <html data-accent> selects the page accent;
+ * any element with data-accent (e.g. a swatch in the appearance menu) previews that preset inside its own box.
+ * Keep the three stops as hex: lib/chart-theme.js converts --brand-from to rgba.
+ */
+[data-accent='ocean'] { --brand-from: #2563eb; --brand-via: #0284c7; --brand-to: #22d3ee; }
+.dark[data-accent='ocean'], .dark [data-accent='ocean'] { --brand-from: #3b82f6; --brand-via: #0ea5e9; --brand-to: #22d3ee; }
+
+[data-accent='violet'] { --brand-from: #7c3aed; --brand-via: #9333ea; --brand-to: #e879f9; }
+.dark[data-accent='violet'], .dark [data-accent='violet'] { --brand-from: #8b5cf6; --brand-via: #a855f7; --brand-to: #f0abfc; }
+
+[data-accent='emerald'] { --brand-from: #059669; --brand-via: #0d9488; --brand-to: #2dd4bf; }
+.dark[data-accent='emerald'], .dark [data-accent='emerald'] { --brand-from: #10b981; --brand-via: #14b8a6; --brand-to: #5eead4; }
+
+[data-accent='rose'] { --brand-from: #e11d48; --brand-via: #db2777; --brand-to: #fb7185; }
+.dark[data-accent='rose'], .dark [data-accent='rose'] { --brand-from: #f43f5e; --brand-via: #ec4899; --brand-to: #fda4af; }
+
+[data-accent='amber'] { --brand-from: #ea580c; --brand-via: #f97316; --brand-to: #fbbf24; }
+.dark[data-accent='amber'], .dark [data-accent='amber'] { --brand-from: #f97316; --brand-via: #fb923c; --brand-to: #fcd34d; }
+
+[data-accent='slate'] { --brand-from: #334155; --brand-via: #475569; --brand-to: #94a3b8; }
+.dark[data-accent='slate'], .dark [data-accent='slate'] { --brand-from: #64748b; --brand-via: #94a3b8; --brand-to: #cbd5e1; }
+
+@theme inline {
+  --font-sans: 'Geist Variable', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-brand: var(--brand-from);
+  --color-brand-via: var(--brand-via);
+  --color-brand-to: var(--brand-to);
+  --color-brand-soft: var(--brand-soft);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --ease-spring: var(--ease-spring);
+  --ease-out-soft: var(--ease-out-soft);
+
+  /* Skeleton: fades in only after 200ms (no flash when local APIs respond instantly); shimmer lives on ::after */
+  --animate-skeleton-in: skeleton-in 0.2s ease-out 0.2s both;
+  @keyframes skeleton-in {
+    from {
+      opacity: 0;
+    }
+  }
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    font-feature-settings: 'cv11', 'ss01';
+    overflow: hidden;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--foreground) 14%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--foreground) 24%, transparent);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ---- Brand gradient utilities (accents only) ---- */
+@utility bg-brand-gradient {
+  background-image: var(--brand-gradient);
+}
+@utility bg-brand-gradient-strong {
+  background-image: var(--brand-gradient-strong);
+}
+@utility text-brand-gradient {
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Gradient border: use with rounded corners; the inside keeps the card background */
+@utility border-brand-gradient {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    var(--brand-gradient) border-box;
+}
+/* Soft glow for primary buttons */
+@utility shadow-brand {
+  box-shadow:
+    0 6px 16px -6px var(--brand-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+/* Soft glow at the top of the page */
+@utility bg-brand-glow {
+  background-image: radial-gradient(900px 260px at 78% -80px, var(--brand-glow), transparent 70%);
+}
+/* Card: white background + hairline border + very light shadow (keeps card edges crisp instead of relying on background differences) */
+@utility surface-card {
+  background: var(--card);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 1px 2px rgba(0, 0, 0, 0.035);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Color transition when switching themes (temporarily added to <html> by ThemeContext) */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition:
+    background-color 0.3s var(--ease-out-soft),
+    border-color 0.3s var(--ease-out-soft),
+    color 0.3s var(--ease-out-soft),
+    fill 0.3s var(--ease-out-soft),
+    box-shadow 0.3s var(--ease-out-soft) !important;
+}
