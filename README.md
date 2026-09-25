@@ -52,6 +52,14 @@ curl "$COATI_BASE_URL/api/agent/v1/chat/completions" \
   -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"
 ```
 
+## 体验设备授权登录
+
+提供独立的 [设备授权示例](examples/device-auth/README.md)，用于验证浏览器授权、令牌领取、模型调用与撤销后的 401 响应，不需要安装 Agent 或产品 CLI。
+
+```bash
+python3 examples/device-auth/device_auth.py --portal http://localhost:8080
+```
+
 ## 开发与验证
 
 本地环境设置见 [Portal README](portal/README.md)。
@@ -72,6 +80,7 @@ python backend/scripts/verify_feature.py --module agent
 ```text
 portal/       模型网关、管理控制台与数据库迁移
 docker/       使用预先构建镜像的服务器部署编排
+examples/     网关 API 接入示例
 .github/      后端验证、前端测试与构建 CI
 ```
 

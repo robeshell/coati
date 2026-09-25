@@ -5,7 +5,8 @@ portal/ contains Flask, React and PostgreSQL integration; docker/ contains
 server deployment definitions.
 
 Desktop applications, CLI implementations, agent plugins and runtime installers
-are outside the public repository. Do not add them as dependencies or vendor them.
+are outside the public repository. Minimal API integration examples under
+examples/ are permitted; they must not depend on those client implementations. Do not add them as dependencies or vendor them.
 Keep company-specific services, credentials, domains and deployment records out.
 
 Backend layers: model → schema → crud → service → api. Reuse backend/common/auth.py
