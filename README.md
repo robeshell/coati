@@ -1,4 +1,4 @@
-<p align="center"><img src="portal/frontend/public/logo.svg" width="80" alt="Coati"></p>
+<p align="center"><img src="portal/frontend/public/logo.png" width="80" alt="Coati"></p>
 
 # Coati
 

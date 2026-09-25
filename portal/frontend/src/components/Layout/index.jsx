@@ -302,7 +302,7 @@ export default function Layout() {
           header={{
             logo: (
               <img
-                src="/logo.svg"
+                src="/logo.png"
                 className="as-brand-logo"
                 alt="Coati Model Gateway"
               />

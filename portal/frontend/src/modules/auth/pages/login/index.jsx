@@ -109,7 +109,7 @@ export default function Login() {
       <section className="coati-login-form-panel">
         <div className="coati-login-form-wrap">
           <div className="coati-login-mobile-brand">
-            <img src="/logo.svg" alt="Coati" />
+            <img src="/logo.png" alt="Coati" />
             <span>Coati</span>
           </div>
           <Title heading={3} className="coati-login-title">登录平台</Title>
