@@ -70,13 +70,13 @@ export function SearchInput({ value, onChange, onSubmit, placeholder = '搜索',
  * Select filter: options = [{ label, value }]; '' / undefined means "all".
  * (Radix Select rejects empty-string values, so an internal sentinel is used.)
  */
-export function FilterSelect({ value, onChange, options = [], placeholder = '全部', allLabel, className }) {
+export function FilterSelect({ value, onChange, options = [], placeholder = '全部', allLabel, ariaLabel, className }) {
   const tx = useTx()
   const current = value === '' || value === undefined || value === null ? ALL : String(value)
   const allText = allLabel ? tx(allLabel) : placeholder === '全部' ? tx('全部') : tx('全部{{name}}', { name: tx(placeholder) })
   return (
     <Select value={current} onValueChange={(next) => onChange?.(next === ALL ? '' : next)}>
-      <SelectTrigger size="sm" className={cn('h-8 w-36 text-[13px]', className)}>
+      <SelectTrigger aria-label={ariaLabel ? tx(ariaLabel) : undefined} size="sm" className={cn('h-8 w-36 text-[13px]', className)}>
         <SelectValue placeholder={tx(placeholder)} />
       </SelectTrigger>
       <SelectContent>

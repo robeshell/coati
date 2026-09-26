@@ -71,7 +71,8 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm verify:gateway
+      - run: pnpm verify:gateway --static
       - run: pnpm test
       - run: pnpm build
       - run: docker build -t coati-node-preview .
+      - run: node scripts/smoke-container.mjs coati-node-preview

@@ -4,7 +4,7 @@
  * Session reads/writes belong to the HTTP layer and are handled by routes; this layer only returns results or throws ServiceError.
  */
 
-import { loadAdminWithRoles } from '@/common/auth'
+import { loadAdminWithRoles, sessionCredentialVersion } from '@/common/auth'
 import { ServiceError } from '@/common/errors'
 import { checkPasswordHash, generatePasswordHash } from '@/common/password'
 import type { AppConfig } from '@/config'
@@ -76,8 +76,8 @@ export class AuthService {
       })
 
       const withRoles = await loadAdminWithRoles(this.db, username)
-      if (!withRoles) throw new ServiceError('用户不存在', 500)
-      return { username, payload: { message: '登录成功', user: adminUserToDict(withRoles) } }
+      if (!withRoles || withRoles.id !== user.id || withRoles.password_hash !== user.password_hash) throw new ServiceError('登录已失效，请重新登录', 401)
+      return { username, userId:user.id, credentialVersion:sessionCredentialVersion(user.password_hash), payload: { message: '登录成功', user: adminUserToDict(withRoles) } }
     }
 
     await this.bestEffort('记录登录日志', () =>
@@ -114,23 +114,25 @@ export class AuthService {
     return { message: '已退出登录' }
   }
 
-  async changePassword(username: string | undefined, data: ChangePasswordPayload) {
+  async changePassword(username: string | undefined, data: ChangePasswordPayload, expectedUserId?: number) {
     const error = validateChangePasswordPayload(data)
     if (error) throw new ServiceError(error, 400)
 
     const admin = username ? await this.repo.getAdminByUsername(username) : null
-    if (!admin) throw new ServiceError('用户不存在', 404)
+    if (!admin || (expectedUserId !== undefined && admin.id !== expectedUserId)) throw new ServiceError('未登录', 401)
     if (!(await checkPasswordHash(admin.password_hash, data?.old_password))) {
       throw new ServiceError('旧密码错误', 400)
     }
 
+    const passwordHash = await generatePasswordHash(String(data?.new_password))
     try {
       // New hashes keep the existing `pbkdf2:sha256:<iterations>$<salt>$<hex>` format, compatible with hashes already stored
-      await this.repo.updatePasswordHash(admin.id, await generatePasswordHash(String(data?.new_password)))
+      if (!(await this.repo.updatePasswordHash(admin.id, passwordHash, admin.password_hash))) throw new ServiceError('登录已失效，请重新登录', 401)
     } catch (err) {
+      if(err instanceof ServiceError) throw err
       throw new ServiceError(err instanceof Error ? err.message : String(err), 500)
     }
-    return { message: '密码修改成功' }
+    return { message: '密码修改成功', credentialVersion: sessionCredentialVersion(passwordHash) }
   }
 
   async getCurrentUser(username: string | undefined) {

@@ -70,13 +70,16 @@ function MenuLeaf({ menu, activeId, onNavigate }) {
 }
 
 function MenuBranch({ menu, activeId, openIds, toggleOpen, onNavigate }) {
-  const { state } = useSidebar()
+  const { state, setOpen, isMobile } = useSidebar()
   const children = visibleChildren(menu)
   const open = openIds.has(menu.id)
   // Submenus are hidden when collapsed to an icon rail: if the current page is in this group, mark the group icon as selected
-  const holdsActive = state === 'collapsed' && children.some((c) => c.id === activeId)
+  const holdsActive = state === 'collapsed' && flattenMenus(children).some((c) => c.id === activeId)
   return (
-    <Collapsible asChild open={open} onOpenChange={() => toggleOpen(menu.id)} className="group/collapsible">
+    <Collapsible asChild open={open} onOpenChange={() => {
+      if (state === 'collapsed' && !isMobile) { setOpen(true); if (!open) toggleOpen(menu.id) }
+      else toggleOpen(menu.id)
+    }} className="group/collapsible">
       <SidebarMenuItem>
         <CollapsibleTrigger asChild>
           <SidebarMenuButton tooltip={menuLabel(menu)} className={cn(ITEM, 'relative z-0')}>
@@ -89,6 +92,10 @@ function MenuBranch({ menu, activeId, openIds, toggleOpen, onNavigate }) {
         <CollapsibleContent className="data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden">
           <SidebarMenuSub className="mr-0 gap-0.5 pr-0">
             {children.map((child) => {
+              if (visibleChildren(child).length > 0) return (
+                <MenuBranch key={child.id} menu={child} activeId={activeId}
+                  openIds={openIds} toggleOpen={toggleOpen} onNavigate={onNavigate} />
+              )
               const active = child.id === activeId
               return (
                 <SidebarMenuSubItem key={child.id}>
@@ -152,7 +159,8 @@ export default function AppSidebar({ variant = 'sidebar', section }) {
 
   const roots = (menus || []).filter(isNavVisible)
   const leafRoots = section && section !== HOME_SECTION ? [] : roots.filter((m) => visibleChildren(m).length === 0)
-  const groupRoots = section === HOME_SECTION ? [] : roots.filter((m) => visibleChildren(m).length > 0 && (!section || m.id === section))
+  // Utility pages have no menu ancestor; keep navigation available when all pages live under groups.
+  const groupRoots = section === HOME_SECTION && leafRoots.length > 0 ? [] : roots.filter((m) => visibleChildren(m).length > 0 && (!section || section === HOME_SECTION || m.id === section))
 
   return (
     <Sidebar collapsible="icon" variant={variant}>
@@ -174,26 +182,18 @@ export default function AppSidebar({ variant = 'sidebar', section }) {
             </SidebarMenu>
           </SidebarGroup>
         ) : null}
-        {groupRoots.map((group) => (
+        {groupRoots.map(group => (
           <SidebarGroup key={group.id}>
-            <SidebarGroupLabel className="text-muted-foreground text-xs font-normal">
+            <SidebarGroupLabel className="text-muted-foreground text-xs font-medium">
               {menuLabel(group)}
             </SidebarGroupLabel>
             <SidebarMenu className="gap-0.5">
-              {visibleChildren(group).map((menu) =>
-                visibleChildren(menu).length > 0 ? (
-                  <MenuBranch
-                    key={menu.id}
-                    menu={menu}
-                    activeId={active?.id}
-                    openIds={openIds}
-                    toggleOpen={toggleOpen}
-                    onNavigate={onNavigate}
-                  />
-                ) : (
-                  <MenuLeaf key={menu.id} menu={menu} activeId={active?.id} onNavigate={onNavigate} />
-                ),
-              )}
+              {visibleChildren(group).map(menu => visibleChildren(menu).length > 0 ? (
+                <MenuBranch key={menu.id} menu={menu} activeId={active?.id}
+                  openIds={openIds} toggleOpen={toggleOpen} onNavigate={onNavigate} />
+              ) : (
+                <MenuLeaf key={menu.id} menu={menu} activeId={active?.id} onNavigate={onNavigate} />
+              ))}
             </SidebarMenu>
           </SidebarGroup>
         ))}

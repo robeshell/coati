@@ -7,6 +7,7 @@
  * With ENABLE_TASK_SCHEDULER=false the scheduler is not started, but the process keeps running (idle).
  */
 
+import { probePolicy, startGatewayProbeRunner } from './modules/gateway/probe-runner'
 import { utcNowIso } from './common/serialize'
 import { startScheduledTaskRunner, type SchedulerLogger } from './common/scheduler/runner'
 import { loadConfig, loadEnvFiles, type AppEnv } from './config'
@@ -35,6 +36,10 @@ const logger: SchedulerLogger = {
 }
 
 const runner = startScheduledTaskRunner(handle.db, config, logger)
+const recovery = probePolicy()
+const gatewayProbeRunner = recovery.enabled
+  ? startGatewayProbeRunner(handle.db, config, logger) : null
+logger.info(recovery, recovery.enabled ? 'Gateway recovery probes enabled' : 'Gateway recovery probes disabled')
 // Keep the event loop alive
 const keepAlive = setInterval(() => {}, 60_000)
 
@@ -50,6 +55,7 @@ const shutdown = async () => {
   stopping = true
   clearInterval(keepAlive)
   await runner?.stop()
+  await gatewayProbeRunner?.stop()
   await handle.pool.end()
   console.log('Scheduled task worker stopped.')
   process.exit(0)

@@ -26,8 +26,9 @@ export class AuthRepository {
     await this.db.insert(operation_logs).values(item)
   }
 
-  async updatePasswordHash(userId: number, passwordHash: string): Promise<void> {
-    await this.db.update(admin_users).set({ password_hash: passwordHash }).where(eq(admin_users.id, userId))
+  async updatePasswordHash(userId: number, passwordHash: string, expectedHash: string): Promise<boolean> {
+    const rows = await this.db.update(admin_users).set({ password_hash: passwordHash }).where(and(eq(admin_users.id, userId), eq(admin_users.password_hash, expectedHash))).returning({id:admin_users.id})
+    return rows.length === 1
   }
 
   /** Failed login count within the recent window; `by` is the ip or username dimension */

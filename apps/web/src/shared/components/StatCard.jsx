@@ -86,8 +86,8 @@ export default function StatCard({ label, value, suffix, decimals = 0, delta, de
             <Skeleton className="h-[26px] w-20" />
           ) : (
             <>
-              <CountUp value={value} decimals={decimals} className="text-[26px] leading-none font-semibold tracking-tight" />
-              {suffix ? <span className="text-muted-foreground text-xs">{tx(suffix)}</span> : null}
+              <span className="text-[26px] leading-none font-semibold tracking-tight">{value == null ? '—' : <CountUp value={value} decimals={decimals} />}</span>
+              {suffix && value != null ? <span className="text-muted-foreground text-xs">{tx(suffix)}</span> : null}
             </>
           )}
         </div>

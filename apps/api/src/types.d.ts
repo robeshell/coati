@@ -16,6 +16,8 @@ declare module 'fastify' {
 /** Fields stored in the session */
 declare module '@fastify/secure-session' {
   interface SessionData {
+    user_id: number
+    credential_version: string
     logged_in: boolean
     username: string
     csrf_token: string

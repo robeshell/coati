@@ -48,7 +48,7 @@ async function loggedIn() {
 beforeAll(async () => {
   handle = openTestDb()
   fx = await createFixture(handle)
-  app = await buildTestApp()
+  app = await buildTestApp({ trustedProxies: ['127.0.0.1', '::1'] })
 })
 
 afterAll(async () => {
@@ -290,9 +290,14 @@ describe('改密 / 登出', () => {
       payload: '{"old_password": "***", "new_password": "***"}',
     })
 
+    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:cookie}})).statusCode).toBe(401)
+    const refreshed=sessionCookie(ok)!
+    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:refreshed}})).statusCode).toBe(200)
+
     // Restore the fixture password so later cases can keep using it
     await handle.db.delete(admin_users).where(eq(admin_users.id, fx.userId))
     fx = await createFixture(handle)
+    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:refreshed}})).statusCode).toBe(401)
   })
 
   it('登出：清 cookie、只记一条 logout 操作日志、之后 me 为 401', async () => {

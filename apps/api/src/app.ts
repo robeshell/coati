@@ -66,8 +66,8 @@ export async function buildApp({
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger,
-    // Trust only the nearest reverse-proxy hop (X-Forwarded-For / X-Forwarded-Proto) so request.ip / protocol are the real values
-    trustProxy: (_address: string, hop: number) => hop < 1,
+    // Forwarded addresses/protocols are authoritative only from explicitly trusted proxies.
+    trustProxy: config.trustedProxies.length ? config.trustedProxies : false,
     bodyLimit: config.maxContentLength,
   })
   app.setValidatorCompiler(validatorCompiler)

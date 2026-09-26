@@ -1,0 +1,1 @@
+ALTER TABLE "gw_user_limits" ADD COLUMN "quota_updated_at" timestamp with time zone;

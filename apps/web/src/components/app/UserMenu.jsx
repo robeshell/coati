@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ChevronsUpDown, LogOut, UserRound } from 'lucide-react'
+import { ChevronsUpDown, LogOut, UserRound, FileText } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,6 +52,9 @@ function UserMenuItems({ user, roleText, onLogout }) {
       </DropdownMenuLabel>
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
+        <DropdownMenuItem onSelect={() => navigate('/agent/my-usage')}>
+          <FileText />{t('我的用量')}
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate('/profile')}>
           <UserRound />
           {t('个人设置')}

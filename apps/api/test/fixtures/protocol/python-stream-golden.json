@@ -1,0 +1,654 @@
+{
+  "source": "portal/backend/app/agent/service/protocol_bridge.py",
+  "sha256": "62e5c26c879ef756fbf083d49751f8891845a2431f987e0328357e12639c2e2f",
+  "testSha256": "ad781696c8ef2051fd3491bfb25a2637f8a6c0bc97d85eb35a9e9766b78d1ad4",
+  "pythonTestsPassed": 43,
+  "note": "Public method traces from unchanged Python stream tests; not Node runtime acceptance.",
+  "cases": [
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "class": "AnthropicToOpenAIStream",
+      "args": [
+        "glm"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "message_start",
+              "message": {
+                "id": "msg-1",
+                "model": "glm"
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "message_start"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-1\", \"object\": \"chat.completion.chunk\", \"model\": \"glm\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "content_block_start",
+              "index": 1,
+              "content_block": {
+                "type": "text",
+                "text": ""
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "content_block_start"
+          },
+          "expected": {
+            "bytes": ""
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "content_block_delta",
+              "index": 1,
+              "delta": {
+                "type": "text_delta",
+                "text": "ok"
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "content_block_delta"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-1\", \"object\": \"chat.completion.chunk\", \"model\": \"glm\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"ok\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn"
+              },
+              "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "message_delta"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-1\", \"object\": \"chat.completion.chunk\", \"model\": \"glm\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 1, \"completion_tokens\": 2}}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "message_stop"
+            }
+          ],
+          "kwargs": {
+            "event": "message_stop"
+          },
+          "expected": {
+            "bytes": "data: [DONE]\n\n"
+          },
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_anthropic_stream_merges_start_cache_usage_into_final_chat_usage",
+      "class": "AnthropicToOpenAIStream",
+      "args": [
+        "claude"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "message_start",
+              "message": {
+                "id": "msg-usage",
+                "usage": {
+                  "input_tokens": 3,
+                  "cache_read_input_tokens": 7,
+                  "cache_creation_input_tokens": 2
+                }
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "message_start"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-usage\", \"object\": \"chat.completion.chunk\", \"model\": \"claude\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "message_delta",
+              "delta": {
+                "stop_reason": "end_turn"
+              },
+              "usage": {
+                "output_tokens": 5
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "message_delta"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-usage\", \"object\": \"chat.completion.chunk\", \"model\": \"claude\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 12, \"completion_tokens\": 5, \"prompt_tokens_details\": {\"cached_tokens\": 7}, \"cache_creation_input_tokens\": 2}}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_failed_source_stream_events_raise_instead_of_emitting_done",
+      "class": "AnthropicToOpenAIStream",
+      "args": [
+        "claude"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "error",
+              "error": {
+                "type": "overloaded_error",
+                "message": "overloaded"
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "error"
+          },
+          "error": "overloaded",
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_failed_source_stream_events_raise_instead_of_emitting_done",
+      "class": "ResponsesToOpenAIStream",
+      "args": [
+        "gpt"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "response.failed",
+              "response": {
+                "status": "failed",
+                "error": {
+                  "type": "server_error",
+                  "message": "upstream failed"
+                }
+              }
+            }
+          ],
+          "kwargs": {
+            "event": "response.failed"
+          },
+          "error": "upstream failed",
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "class": "AnthropicToOpenAIStream",
+      "args": [
+        "model"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed_line",
+          "args": [
+            "event: message_start"
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": ""
+          },
+          "finished": false
+        },
+        {
+          "method": "feed_line",
+          "args": [
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"glm\"}}"
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-1\", \"object\": \"chat.completion.chunk\", \"model\": \"model\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed_line",
+          "args": [
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}"
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "data: {\"id\": \"msg-1\", \"object\": \"chat.completion.chunk\", \"model\": \"model\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"ok\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "class": "OpenAIToResponsesStream",
+      "args": [
+        "model"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "msg-1",
+              "object": "chat.completion.chunk",
+              "model": "model",
+              "choices": [
+                {
+                  "index": 0,
+                  "delta": {
+                    "role": "assistant",
+                    "content": ""
+                  },
+                  "finish_reason": null
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: response.created\ndata: {\"response\": {\"id\": \"msg-1\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"model\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.created\", \"sequence_number\": 0}\n\nevent: response.in_progress\ndata: {\"response\": {\"id\": \"msg-1\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"model\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.in_progress\", \"sequence_number\": 1}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "msg-1",
+              "object": "chat.completion.chunk",
+              "model": "model",
+              "choices": [
+                {
+                  "index": 0,
+                  "delta": {
+                    "content": "ok"
+                  },
+                  "finish_reason": null
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: response.output_item.added\ndata: {\"output_index\": 0, \"item\": {\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"in_progress\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}]}, \"type\": \"response.output_item.added\", \"sequence_number\": 2}\n\nevent: response.content_part.added\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"part\": {\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}, \"type\": \"response.content_part.added\", \"sequence_number\": 3}\n\nevent: response.output_text.delta\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"delta\": \"ok\", \"logprobs\": [], \"type\": \"response.output_text.delta\", \"sequence_number\": 4}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "class": "ResponsesToOpenAIStream",
+      "args": [
+        "model"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed_line",
+          "args": [
+            "event: response.created"
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": ""
+          },
+          "finished": false
+        },
+        {
+          "method": "feed_line",
+          "args": [
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\",\"model\":\"gpt\"}}"
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "data: {\"id\": \"resp-1\", \"object\": \"chat.completion.chunk\", \"model\": \"model\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "class": "OpenAIToAnthropicStream",
+      "args": [
+        "model"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "resp-1",
+              "object": "chat.completion.chunk",
+              "model": "model",
+              "choices": [
+                {
+                  "index": 0,
+                  "delta": {
+                    "role": "assistant",
+                    "content": ""
+                  },
+                  "finish_reason": null
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"resp-1\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"model\", \"content\": [], \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}}}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    },
+    {
+      "test": "test_openai_stream_to_anthropic_events",
+      "class": "OpenAIToAnthropicStream",
+      "args": [
+        "coati-auto"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "chatcmpl-1",
+              "choices": [
+                {
+                  "delta": {
+                    "reasoning_content": "why"
+                  }
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"chatcmpl-1\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"coati-auto\", \"content\": [], \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}}}\n\nevent: content_block_start\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"\"}}\n\nevent: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"why\"}}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "choices": [
+                {
+                  "delta": {
+                    "content": "hi"
+                  },
+                  "finish_reason": "stop"
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2
+              }
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: content_block_stop\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\nevent: content_block_start\ndata: {\"type\": \"content_block_start\", \"index\": 1, \"content_block\": {\"type\": \"text\", \"text\": \"\"}}\n\nevent: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 1, \"delta\": {\"type\": \"text_delta\", \"text\": \"hi\"}}\n\nevent: content_block_stop\ndata: {\"type\": \"content_block_stop\", \"index\": 1}\n\nevent: message_delta\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\", \"stop_sequence\": null}, \"usage\": {\"output_tokens\": 2}}\n\nevent: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"
+          },
+          "finished": true
+        },
+        {
+          "method": "finish",
+          "args": [],
+          "kwargs": {},
+          "expected": [],
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_openai_tool_stream_keeps_block_index_and_serializes_object_arguments",
+      "class": "OpenAIToAnthropicStream",
+      "args": [
+        "qwen3.8-flash"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "choices": [
+                {
+                  "delta": {
+                    "tool_calls": [
+                      {
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {
+                          "name": "read_file",
+                          "arguments": ""
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_coati\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"qwen3.8-flash\", \"content\": [], \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}}}\n\nevent: content_block_start\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"call_1\", \"name\": \"read_file\", \"input\": {}}}\n\n"
+          },
+          "finished": false
+        },
+        {
+          "method": "feed",
+          "args": [
+            {
+              "choices": [
+                {
+                  "delta": {
+                    "tool_calls": [
+                      {
+                        "index": 0,
+                        "function": {
+                          "arguments": {
+                            "path": "a.py"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "finish_reason": "tool_calls"
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: content_block_delta\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"{\\\"path\\\": \\\"a.py\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\nevent: message_delta\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"tool_use\", \"stop_sequence\": null}, \"usage\": {\"output_tokens\": 0}}\n\nevent: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"
+          },
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_openai_stream_to_responses_events",
+      "class": "OpenAIToResponsesStream",
+      "args": [
+        "coati-auto"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "chatcmpl-1",
+              "choices": [
+                {
+                  "delta": {
+                    "content": "hi"
+                  },
+                  "finish_reason": "stop"
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 1,
+                "completion_tokens": 2
+              }
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: response.created\ndata: {\"response\": {\"id\": \"chatcmpl-1\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"coati-auto\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.created\", \"sequence_number\": 0}\n\nevent: response.in_progress\ndata: {\"response\": {\"id\": \"chatcmpl-1\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"coati-auto\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.in_progress\", \"sequence_number\": 1}\n\nevent: response.output_item.added\ndata: {\"output_index\": 0, \"item\": {\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"in_progress\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}]}, \"type\": \"response.output_item.added\", \"sequence_number\": 2}\n\nevent: response.content_part.added\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"part\": {\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}, \"type\": \"response.content_part.added\", \"sequence_number\": 3}\n\nevent: response.output_text.delta\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"delta\": \"hi\", \"logprobs\": [], \"type\": \"response.output_text.delta\", \"sequence_number\": 4}\n\nevent: response.output_text.done\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"text\": \"hi\", \"logprobs\": [], \"type\": \"response.output_text.done\", \"sequence_number\": 5}\n\nevent: response.content_part.done\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"part\": {\"type\": \"output_text\", \"text\": \"hi\", \"annotations\": []}, \"type\": \"response.content_part.done\", \"sequence_number\": 6}\n\nevent: response.output_item.done\ndata: {\"output_index\": 0, \"item\": {\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"completed\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"hi\", \"annotations\": []}]}, \"type\": \"response.output_item.done\", \"sequence_number\": 7}\n\nevent: response.completed\ndata: {\"response\": {\"id\": \"chatcmpl-1\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"completed\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"coati-auto\", \"output\": [{\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"completed\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"hi\", \"annotations\": []}]}], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": {\"input_tokens\": 1, \"input_tokens_details\": {\"cache_write_tokens\": 0, \"cached_tokens\": 0}, \"output_tokens\": 2, \"output_tokens_details\": {\"reasoning_tokens\": 0}, \"total_tokens\": 3}}, \"type\": \"response.completed\", \"sequence_number\": 8}\n\n"
+          },
+          "finished": true
+        },
+        {
+          "method": "finish",
+          "args": [],
+          "kwargs": {},
+          "expected": [],
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_responses_stream_uses_strict_event_shapes_and_sequence_numbers",
+      "class": "OpenAIToResponsesStream",
+      "args": [
+        "gpt"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "id": "chatcmpl-strict",
+              "choices": [
+                {
+                  "delta": {
+                    "content": "ok"
+                  },
+                  "finish_reason": "stop"
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 3
+              }
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: response.created\ndata: {\"response\": {\"id\": \"chatcmpl-strict\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"gpt\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.created\", \"sequence_number\": 0}\n\nevent: response.in_progress\ndata: {\"response\": {\"id\": \"chatcmpl-strict\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"in_progress\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"gpt\", \"output\": [], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": null}, \"type\": \"response.in_progress\", \"sequence_number\": 1}\n\nevent: response.output_item.added\ndata: {\"output_index\": 0, \"item\": {\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"in_progress\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}]}, \"type\": \"response.output_item.added\", \"sequence_number\": 2}\n\nevent: response.content_part.added\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"part\": {\"type\": \"output_text\", \"text\": \"\", \"annotations\": []}, \"type\": \"response.content_part.added\", \"sequence_number\": 3}\n\nevent: response.output_text.delta\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"delta\": \"ok\", \"logprobs\": [], \"type\": \"response.output_text.delta\", \"sequence_number\": 4}\n\nevent: response.output_text.done\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"text\": \"ok\", \"logprobs\": [], \"type\": \"response.output_text.done\", \"sequence_number\": 5}\n\nevent: response.content_part.done\ndata: {\"item_id\": \"msg_coati\", \"output_index\": 0, \"content_index\": 0, \"part\": {\"type\": \"output_text\", \"text\": \"ok\", \"annotations\": []}, \"type\": \"response.content_part.done\", \"sequence_number\": 6}\n\nevent: response.output_item.done\ndata: {\"output_index\": 0, \"item\": {\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"completed\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"ok\", \"annotations\": []}]}, \"type\": \"response.output_item.done\", \"sequence_number\": 7}\n\nevent: response.completed\ndata: {\"response\": {\"id\": \"chatcmpl-strict\", \"object\": \"response\", \"created_at\": 1700000000, \"status\": \"completed\", \"error\": null, \"incomplete_details\": null, \"instructions\": null, \"model\": \"gpt\", \"output\": [{\"id\": \"msg_coati\", \"type\": \"message\", \"status\": \"completed\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"ok\", \"annotations\": []}]}], \"parallel_tool_calls\": true, \"tool_choice\": \"auto\", \"tools\": [], \"usage\": {\"input_tokens\": 2, \"input_tokens_details\": {\"cache_write_tokens\": 0, \"cached_tokens\": 0}, \"output_tokens\": 3, \"output_tokens_details\": {\"reasoning_tokens\": 0}, \"total_tokens\": 5}}, \"type\": \"response.completed\", \"sequence_number\": 8}\n\n"
+          },
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_anthropic_stream_always_emits_terminal_usage",
+      "class": "OpenAIToAnthropicStream",
+      "args": [
+        "gpt"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "choices": [
+                {
+                  "delta": {},
+                  "finish_reason": "stop"
+                }
+              ]
+            }
+          ],
+          "kwargs": {},
+          "expected": {
+            "bytes": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_coati\", \"type\": \"message\", \"role\": \"assistant\", \"model\": \"gpt\", \"content\": [], \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}}}\n\nevent: message_delta\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\", \"stop_sequence\": null}, \"usage\": {\"output_tokens\": 0}}\n\nevent: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"
+          },
+          "finished": true
+        }
+      ]
+    },
+    {
+      "test": "test_responses_refusal_is_preserved_as_visible_text",
+      "class": "ResponsesToOpenAIStream",
+      "args": [
+        "gpt"
+      ],
+      "kwargs": {},
+      "calls": [
+        {
+          "method": "feed",
+          "args": [
+            {
+              "type": "response.refusal.done",
+              "refusal": "不能帮助你"
+            }
+          ],
+          "kwargs": {
+            "event": "response.refusal.done"
+          },
+          "expected": {
+            "bytes": "data: {\"id\": \"chatcmpl_coati\", \"object\": \"chat.completion.chunk\", \"model\": \"gpt\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"chatcmpl_coati\", \"object\": \"chat.completion.chunk\", \"model\": \"gpt\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"不能帮助你\"}, \"finish_reason\": null}]}\n\n"
+          },
+          "finished": false
+        }
+      ]
+    }
+  ]
+}

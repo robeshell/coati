@@ -98,6 +98,20 @@ describe('FormDialog + FormFields', () => {
   })
 })
 
+it('guards concurrent form submissions until the pending mutation settles', async () => {
+  let finish
+  const onSubmit=vi.fn(()=>new Promise(resolve=>{finish=resolve}))
+  render(<DialogHarness onSubmit={onSubmit} />)
+  await userEvent.type(screen.getByLabelText(/用户名/),'alice')
+  const form=screen.getByText('保存').closest('form')
+  fireEvent.submit(form)
+  fireEvent.submit(form)
+  await waitFor(()=>expect(onSubmit).toHaveBeenCalledTimes(1))
+  expect(screen.getByText('保存')).toBeDisabled()
+  finish()
+  await waitFor(()=>expect(screen.getByText('保存')).not.toBeDisabled())
+})
+
 describe('ExportDialog', () => {
   it('默认字段勾选、格式切换并回传', async () => {
     const onConfirm = vi.fn()

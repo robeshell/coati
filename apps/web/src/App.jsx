@@ -10,6 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import Login from '@/modules/auth/pages/login'
 import Profile from '@/modules/admin/pages/profile'
 import DeviceConfirm from '@/modules/gateway/pages/device'
+import MyUsage from '@/modules/gateway/pages/my-usage'
 import { useTranslation } from 'react-i18next'
 
 // Not eager: page components are lazy-loaded on demand (React.lazy) to avoid downloading heavy deps like three/echarts/monaco on first load
@@ -116,6 +117,7 @@ function AppRoutes() {
         }
       >
         <Route index element={defaultPath ? <Navigate to={defaultPath} replace /> : <NoPermissionPage />} />
+        <Route path="agent/my-usage" element={<MyUsage />} />
         <Route path="agent/device-confirm" element={<DeviceConfirm />} />
         <Route path="profile" element={<Profile />} />
         <Route path="403" element={<ErrorPage code="403" title={t('无访问权限')} description={t('您没有权限访问该页面，请联系管理员。')} />} />

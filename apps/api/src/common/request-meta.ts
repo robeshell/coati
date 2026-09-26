@@ -18,6 +18,7 @@ export function getUserAgent(request: FastifyRequest): string {
 }
 
 export const SENSITIVE_KEYS = new Set([
+  'prompt',
   'password',
   'old_password',
   'new_password',
@@ -26,6 +27,9 @@ export const SENSITIVE_KEYS = new Set([
   'token',
   'access_token',
   'api_key',
+  'proxy_url',
+  'proxy_secret',
+  'proxy-authorization',
   'authorization',
 ])
 

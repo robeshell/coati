@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Form } from '@/components/ui/form'
@@ -12,7 +12,10 @@ const SIZES = { sm: 'sm:max-w-[420px]', md: 'sm:max-w-[560px]', lg: 'sm:max-w-[7
 
 function useSubmit(form, onSubmit) {
   const [submitting, setSubmitting] = useState(false)
+  const pending = useRef(false)
   const handle = form.handleSubmit(async (values) => {
+    if (pending.current) return
+    pending.current = true
     // The caller closes the dialog on success: blur the submit button first so Radix does not warn
     // about applying aria-hidden to content that still holds focus
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
@@ -24,6 +27,7 @@ function useSubmit(form, onSubmit) {
       // avoid an unhandled rejection. Non-API errors (page bugs) are still logged in development.
       if (import.meta.env.DEV && err instanceof Error && !err.isAxiosError) console.error(err)
     } finally {
+      pending.current = false
       setSubmitting(false)
     }
   })

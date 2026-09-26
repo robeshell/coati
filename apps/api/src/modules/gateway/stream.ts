@@ -1,14 +1,13 @@
+import { normalizeUsage, mergeUsage } from './usage'
 import { GatewayError, type Protocol } from './schema'
 type JsonObject = Record<string, unknown>
 const object = (value: unknown): JsonObject =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as JsonObject)
     : {}
-const tokenCount = (value: unknown): number | null =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : null
 export class UsageMeter {
+  rawUsage: JsonObject = {}
+  sourceProtocol: Protocol = 'openai'
   input: number | null = null
   output: number | null = null
   outputCharacters = 0
@@ -20,7 +19,9 @@ export class UsageMeter {
       value.error ||
       value.type === 'error' ||
       value.type === 'response.failed' ||
-      value.type === 'response.incomplete'
+      value.type === 'response.error' ||
+      response.status === 'failed' ||
+      value.status === 'failed'
     ) {
       throw new GatewayError(
         502,
@@ -32,16 +33,11 @@ export class UsageMeter {
       )
     }
     const usage = object(value.usage || response.usage || message.usage)
-    const input = tokenCount(usage.prompt_tokens ?? usage.input_tokens)
-    const output = tokenCount(usage.completion_tokens ?? usage.output_tokens)
-    if (input !== null)
-      this.input =
-        input +
-        (protocol === 'anthropic'
-          ? (tokenCount(usage.cache_read_input_tokens) ?? 0) +
-            (tokenCount(usage.cache_creation_input_tokens) ?? 0)
-          : 0)
-    if (output !== null) this.output = output
+    this.sourceProtocol = protocol
+    this.rawUsage = mergeUsage(this.rawUsage, usage)
+    const normalized = normalizeUsage(this.rawUsage, protocol)
+    this.input = normalized.input
+    this.output = normalized.output
     const choice = object(
       Array.isArray(value.choices) ? value.choices[0] : undefined,
     )
@@ -55,8 +51,27 @@ export class UsageMeter {
     this.outputCharacters += typeof content === 'string' ? content.length : 0
     if (Array.isArray(chatDelta.tool_calls))
       this.outputCharacters += JSON.stringify(chatDelta.tool_calls).length
-    if (value.type === 'message_stop' || value.type === 'response.completed')
+    if (
+      [
+        'message_stop',
+        'response.completed',
+        'response.incomplete',
+        'response.done',
+      ].includes(String(value.type))
+    )
       this.finished = true
+  }
+  details() {
+    const {
+      input: _input,
+      output: _output,
+      ...details
+    } = normalizeUsage(this.rawUsage, this.sourceProtocol)
+    return {
+      ...details,
+      upstream_protocol: this.sourceProtocol,
+      raw_usage: structuredClone(this.rawUsage),
+    }
   }
   result(promptEstimate: number) {
     return {
@@ -134,11 +149,16 @@ export async function* nativeStream(
   if (buffer.trim()) throw new GatewayError(502, '上游 SSE 事件不完整')
   if (!meter.finished) throw new GatewayError(502, '上游流式响应缺少结束事件')
 }
-export function streamError(protocol: Protocol, message: string, id: string) {
+export function streamError(
+  protocol: Protocol,
+  message: string,
+  id: string,
+  code = 'stream_error',
+) {
   const error = {
     message,
     type: 'gateway_error',
-    code: 'stream_error',
+    code,
     request_id: id,
   }
   if (protocol === 'anthropic')

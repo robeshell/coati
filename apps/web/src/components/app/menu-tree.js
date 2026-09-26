@@ -5,7 +5,7 @@
  */
 
 /** Pages that are not menus but still get a breadcrumb / tab title (the Chinese source text is the i18n key) */
-export const STATIC_TITLES = { '/profile': '个人设置', '/403': '无访问权限' }
+export const STATIC_TITLES = { '/agent/my-usage': '我的用量', '/profile': '个人设置', '/403': '无访问权限' }
 
 export function isNavVisible(menu) {
   return Boolean(menu && menu.is_active && menu.is_visible && menu.menu_type !== 'button')

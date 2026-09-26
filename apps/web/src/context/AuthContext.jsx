@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { groupGatewayNavigation } from '@/components/app/gateway-navigation'
+import { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import { getMe, getMyMenus, logout as apiLogout } from '@/modules/admin/api/auth'
 
 const AuthContext = createContext(null)
@@ -48,8 +49,10 @@ export function AuthProvider({ children }) {
     return menuCodes.includes(code)
   }
 
+  const navigation = useMemo(() => groupGatewayNavigation(menus), [menus])
+
   return (
-    <AuthContext.Provider value={{ user, menus, menuCodes, loading, login, logout, hasPermission }}>
+    <AuthContext.Provider value={{ user, menus: navigation, menuCodes, loading, login, logout, hasPermission }}>
       {children}
     </AuthContext.Provider>
   )

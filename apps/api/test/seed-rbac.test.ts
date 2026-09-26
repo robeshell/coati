@@ -87,11 +87,18 @@ describe('MENUS_DATA', () => {
     ] as const) {
       expect(MENUS_DATA.find((m) => m.id === id)?.code).toBe(code)
     }
+    expect(MENUS_DATA.find(m => m.code === 'gateway_my_usage_export')?.parent_id).toBe(MENUS_DATA.find(m => m.code === 'gateway_my_usage')?.id)
     const seen = new Set<number>()
     for (const menu of MENUS_DATA) {
       if (menu.parent_id !== null) expect(seen.has(menu.parent_id)).toBe(true)
       seen.add(menu.id)
-      expect(menu.is_visible).toBe(menu.menu_type === 'menu')
+      if (menu.menu_type === 'button') expect(menu.is_visible).toBe(false)
+      if (menu.is_visible) expect(menu.menu_type).toBe('menu')
+      // API-only permission groups stay hidden until their console page exists.
+      if (menu.menu_type === 'menu' && !menu.is_visible) {
+        expect(menu.path).toBeNull()
+        expect(menu.component).toBeNull()
+      }
     }
   })
 })

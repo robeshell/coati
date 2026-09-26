@@ -1,3 +1,5 @@
+import UserLimitsDialog from '@/modules/gateway/components/UserLimitsDialog'
+import { useAuth } from '@/context/AuthContext'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { AnimatePresence, motion } from 'motion/react'
@@ -48,6 +50,7 @@ const normalizeFileType = (raw) => (['csv', 'xlsx'].includes(raw) ? raw : 'xlsx'
  */
 export default function Users() {
   const { t } = useTranslation()
+  const { hasPermission } = useAuth()
   const list = useCrudList(
     (params) =>
       getUsers(params).catch((err) => {
@@ -187,9 +190,10 @@ export default function Users() {
       key: 'actions',
       title: '',
       align: 'right',
-      width: 132,
+      width: 220,
       render: (_, record) => (
         <div className="flex justify-end gap-0.5">
+          {hasPermission('system_users_edit') && <UserLimitsDialog user={record} />}
           <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openEdit(record)}>
             {t('编辑')}
           </Button>

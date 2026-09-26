@@ -1,0 +1,1 @@
+ALTER TABLE "gw_routes" ADD COLUMN "vision_model" text;

@@ -71,6 +71,8 @@ export const MENUS_DATA: readonly MenuSeed[] = [
   { id: 255, name: "导入字典", code: "system_dicts_import", icon: null, path: null, component: null, parent_id: 25, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
   {id: 1000, name: "网关总览", code: "gateway_overview", icon: "IconHome", path: "/dashboard", component: "gateway/overview", parent_id: null, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true},
   {id: 1001, name: "模型服务", code: "gateway_upstreams", icon: "IconServer", path: "/gateway/upstreams", component: "gateway/upstreams", parent_id: null, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true},
+  {id: 1010, name: "我的用量", code: "gateway_my_usage", icon: "IconFile", path: null, component: null, parent_id: null, sort_order: 11, menu_type: "menu", is_visible: false, is_active: true},
+  {id: 10014, name: "测试模型服务", code: "gateway_upstreams_test", icon: null, path: null, component: null, parent_id: 1001, sort_order: 4, menu_type: "button", is_visible: false, is_active: true},
   {id: 10011, name: "新增模型服务", code: "gateway_upstreams_add", icon: null, path: null, component: null, parent_id: 1001, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10012, name: "编辑模型服务", code: "gateway_upstreams_edit", icon: null, path: null, component: null, parent_id: 1001, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 10013, name: "停用模型服务", code: "gateway_upstreams_delete", icon: null, path: null, component: null, parent_id: 1001, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
@@ -82,11 +84,33 @@ export const MENUS_DATA: readonly MenuSeed[] = [
   {id: 10031, name: "创建访问密钥", code: "gateway_keys_add", icon: null, path: null, component: null, parent_id: 1003, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10032, name: "编辑访问密钥", code: "gateway_keys_edit", icon: null, path: null, component: null, parent_id: 1003, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 10033, name: "吊销访问密钥", code: "gateway_keys_delete", icon: null, path: null, component: null, parent_id: 1003, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
+  {id: 1009, name: "设备登录确认", code: "gateway_device_confirm", icon: "IconKey", path: null, component: null, parent_id: null, sort_order: 10, menu_type: "menu", is_visible: false, is_active: true},
+  {id: 10035, name: "确认设备登录", code: "gateway_device_confirm_action", icon: null, path: null, component: null, parent_id: 1009, sort_order: 5, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10034, name: "轮换访问密钥", code: "gateway_keys_rotate", icon: null, path: null, component: null, parent_id: 1003, sort_order: 4, menu_type: "button", is_visible: false, is_active: true},
   {id: 1004, name: "请求日志", code: "gateway_requests", icon: "IconFile", path: "/gateway/requests", component: "gateway/requests", parent_id: null, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true},
+  {id: 10041, name: "导出个人用量", code: "gateway_my_usage_export", icon: null, path: null, component: null, parent_id: 1010, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10042, name: "编辑用户配额", code: "gateway_requests_quota_edit", icon: null, path: null, component: null, parent_id: 1004, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
+  {id: 1008, name: "网页搜索", code: "gateway_websearch", icon: "IconSearch", path: "/gateway/web-search", component: "gateway/web-search", parent_id: null, sort_order: 9, menu_type: "menu", is_visible: true, is_active: true},
+  {id: 10081, name: "配置网页搜索", code: "gateway_websearch_edit", icon: null, path: null, component: null, parent_id: 1008, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 1007, name: "缓存验证", code: "gateway_cache_tests", icon: "IconServer", path: "/gateway/cache-tests", component: "gateway/cache-tests", parent_id: null, sort_order: 8, menu_type: "menu", is_visible: true, is_active: true},
+  {id: 10071, name: "运行缓存验证", code: "gateway_cache_tests_run", icon: null, path: null, component: null, parent_id: 1007, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10072, name: "删除缓存验证", code: "gateway_cache_tests_delete", icon: null, path: null, component: null, parent_id: 1007, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
+  {id: 1006, name: "模型能力", code: "gateway_model_profiles", icon: "IconServer", path: "/gateway/model-profiles", component: "gateway/model-profiles", parent_id: null, sort_order: 7, menu_type: "menu", is_visible: true, is_active: true},
+  ...['add','edit','delete'].map((action,index)=>({id:10061+index,name:['新增模型能力','编辑模型能力','删除模型能力'][index]!,code:`gateway_model_profiles_${action}`,icon:null,path:null,component:null,parent_id:1006,sort_order:index+1,menu_type:'button' as const,is_visible:false,is_active:true})),
+  {id: 1005, name: "模型渠道", code: "gateway_my_channels", icon: "IconServer", path: "/gateway/my-channels", component: "gateway/my-channels", parent_id: null, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true},
+  {id: 10051, name: "新增个人渠道", code: "gateway_my_channels_add", icon: null, path: null, component: null, parent_id: 1005, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10052, name: "编辑个人渠道", code: "gateway_my_channels_edit", icon: null, path: null, component: null, parent_id: 1005, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10053, name: "删除个人渠道", code: "gateway_my_channels_delete", icon: null, path: null, component: null, parent_id: 1005, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
+
+  {id: 10054, name: "测试个人渠道", code: "gateway_my_channels_test", icon: null, path: null, component: null, parent_id: 1005, sort_order: 4, menu_type: "button", is_visible: false, is_active: true},
+
 ]
 
 /** Retired experimental page menus: data is kept but they are hidden from navigation */
-export const RETIRED_MENU_CODES = ['component_center_templates', 'component_center_scenarios'] as const
+export const RETIRED_MENU_CODES = [
+  'component_center_templates',
+  'component_center_scenarios',
+] as const
 
 const MENU_UPDATE_FIELDS = [
   'name',
@@ -134,7 +158,10 @@ export interface SeedRbacResult {
   adminCreated: boolean
 }
 
-async function inTransaction<T>(client: Queryable, fn: () => Promise<T>): Promise<T> {
+async function inTransaction<T>(
+  client: Queryable,
+  fn: () => Promise<T>,
+): Promise<T> {
   await client.query('BEGIN')
   try {
     const result = await fn()
@@ -146,12 +173,21 @@ async function inTransaction<T>(client: Queryable, fn: () => Promise<T>): Promis
   }
 }
 
-async function findMenuByCode(client: Queryable, code: string): Promise<MenuRow | undefined> {
-  const { rows } = await client.query<MenuRow>('SELECT * FROM menus WHERE code = $1 LIMIT 1', [code])
+async function findMenuByCode(
+  client: Queryable,
+  code: string,
+): Promise<MenuRow | undefined> {
+  const { rows } = await client.query<MenuRow>(
+    'SELECT * FROM menus WHERE code = $1 LIMIT 1',
+    [code],
+  )
   return rows[0]
 }
 
-async function clearRbacData(client: Queryable, log: (msg: string) => void): Promise<void> {
+async function clearRbacData(
+  client: Queryable,
+  log: (msg: string) => void,
+): Promise<void> {
   log('清空现有RBAC数据...')
   try {
     await inTransaction(client, async () => {
@@ -174,17 +210,20 @@ async function clearRbacData(client: Queryable, log: (msg: string) => void): Pro
 }
 
 /** Migrate the old menu code data_management to component_center, avoiding duplicate menus after the rename */
-async function migrateComponentCenterMenuCode(client: Queryable, log: (msg: string) => void): Promise<void> {
+async function migrateComponentCenterMenuCode(
+  client: Queryable,
+  log: (msg: string) => void,
+): Promise<void> {
   const legacy = await findMenuByCode(client, 'data_management')
   const current = await findMenuByCode(client, 'component_center')
   if (!legacy) return
 
   if (current && current.id !== legacy.id) {
     // Move any submenus attached under the new-code menu back to the old menu to keep the hierarchy stable
-    await client.query(`UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`, [
-      legacy.id,
-      current.id,
-    ])
+    await client.query(
+      `UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`,
+      [legacy.id, current.id],
+    )
     // Migrate role-menu links so permissions are not lost when the duplicate menu is deleted
     await client.query(
       `INSERT INTO role_menus (role_id, menu_id)
@@ -196,26 +235,30 @@ async function migrateComponentCenterMenuCode(client: Queryable, log: (msg: stri
        )`,
       [legacy.id, current.id],
     )
-    await client.query('DELETE FROM role_menus WHERE menu_id = $1', [current.id])
-    // First rename the duplicate record to a temporary code to avoid a unique-key conflict, then delete it
-    await client.query(`UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`, [
-      `component_center_legacy_${current.id}`,
+    await client.query('DELETE FROM role_menus WHERE menu_id = $1', [
       current.id,
     ])
+    // First rename the duplicate record to a temporary code to avoid a unique-key conflict, then delete it
+    await client.query(
+      `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
+      [`component_center_legacy_${current.id}`, current.id],
+    )
     await client.query('DELETE FROM menus WHERE id = $1', [current.id])
     log('  已合并重复菜单: [data_management] + [component_center]')
   }
 
-  await client.query(`UPDATE menus SET code = $1, name = $2, updated_at = ${UTC_NOW} WHERE id = $3`, [
-    'component_center',
-    '组件示例中心',
-    legacy.id,
-  ])
+  await client.query(
+    `UPDATE menus SET code = $1, name = $2, updated_at = ${UTC_NOW} WHERE id = $3`,
+    ['component_center', '组件示例中心', legacy.id],
+  )
   log('  菜单编码迁移: [data_management] -> [component_center]')
 }
 
 /** Migrate the old query_management menu/button codes to list_page, avoiding duplicate menus */
-async function migrateListPageMenuCodes(client: Queryable, log: (msg: string) => void): Promise<void> {
+async function migrateListPageMenuCodes(
+  client: Queryable,
+  log: (msg: string) => void,
+): Promise<void> {
   const codeMappings: Array<[string, string]> = [
     ['system_query_management', 'system_list_page'],
     ['system_query_management_add', 'system_list_page_add'],
@@ -229,10 +272,10 @@ async function migrateListPageMenuCodes(client: Queryable, log: (msg: string) =>
     if (!legacy) continue
 
     if (current && current.id !== legacy.id) {
-      await client.query(`UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`, [
-        current.id,
-        legacy.id,
-      ])
+      await client.query(
+        `UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`,
+        [current.id, legacy.id],
+      )
       await client.query(
         `INSERT INTO role_menus (role_id, menu_id)
          SELECT DISTINCT rm.role_id, $1::int
@@ -243,23 +286,32 @@ async function migrateListPageMenuCodes(client: Queryable, log: (msg: string) =>
          )`,
         [current.id, legacy.id],
       )
-      await client.query('DELETE FROM role_menus WHERE menu_id = $1', [legacy.id])
-      await client.query(`UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`, [
-        `legacy_${oldCode}_${legacy.id}`,
+      await client.query('DELETE FROM role_menus WHERE menu_id = $1', [
         legacy.id,
       ])
+      await client.query(
+        `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
+        [`legacy_${oldCode}_${legacy.id}`, legacy.id],
+      )
       await client.query('DELETE FROM menus WHERE id = $1', [legacy.id])
       log(`  已合并重复菜单编码: [${oldCode}] + [${newCode}]`)
       continue
     }
 
-    await client.query(`UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`, [newCode, legacy.id])
+    await client.query(
+      `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
+      [newCode, legacy.id],
+    )
     log(`  菜单编码迁移: [${oldCode}] -> [${newCode}]`)
   }
 }
 
 /** Sync a PostgreSQL table's primary-key sequence to the current max id (table name is an internal constant, not user input) */
-async function syncIdSequence(client: Queryable, tableName: 'menus', log: (msg: string) => void): Promise<void> {
+async function syncIdSequence(
+  client: Queryable,
+  tableName: 'menus',
+  log: (msg: string) => void,
+): Promise<void> {
   await client.query(
     `SELECT setval(
        pg_get_serial_sequence('${tableName}', 'id'),
@@ -270,7 +322,10 @@ async function syncIdSequence(client: Queryable, tableName: 'menus', log: (msg: 
   log(`  已同步序列: ${tableName}.id`)
 }
 
-async function initMenus(client: Queryable, log: (msg: string) => void): Promise<{ added: number; updated: number }> {
+async function initMenus(
+  client: Queryable,
+  log: (msg: string) => void,
+): Promise<{ added: number; updated: number }> {
   let added = 0
   let updated = 0
 
@@ -279,13 +334,24 @@ async function initMenus(client: Queryable, log: (msg: string) => void): Promise
     await migrateListPageMenuCodes(client, log)
 
     log('初始化菜单数据...')
-    const { rows: idRows } = await client.query<{ id: number }>('SELECT id FROM menus')
+    const { rows: idRows } = await client.query<{ id: number }>(
+      'SELECT id FROM menus',
+    )
     const existingIds = new Set(idRows.map((r) => r.id))
 
-    for (const menu of MENUS_DATA) {
+    const resolvedIds = new Map<number, number>()
+    for (const definition of MENUS_DATA) {
+      // Existing installations may retain a different ID for a canonical code.
+      // Resolve children against the actual parent, not the seed's preferred ID.
+      const parentId = definition.parent_id === null ? null : resolvedIds.get(definition.parent_id)
+      if (parentId === undefined) throw new Error(`Missing seeded parent for ${definition.code}`)
+      const menu = { ...definition, parent_id: parentId }
       const existing = await findMenuByCode(client, menu.code)
       if (existing) {
-        const changed = MENU_UPDATE_FIELDS.some((field) => existing[field] !== menu[field])
+        resolvedIds.set(definition.id, existing.id)
+        const changed = MENU_UPDATE_FIELDS.some(
+          (field) => existing[field] !== menu[field],
+        )
         if (changed) {
           await client.query(
             `UPDATE menus SET name = $1, icon = $2, path = $3, component = $4, parent_id = $5,
@@ -332,6 +398,7 @@ async function initMenus(client: Queryable, log: (msg: string) => void): Promise
         useFixedId ? [...values, menu.id] : values,
       )
       const newId = rows[0]!.id
+      resolvedIds.set(definition.id, newId)
       added += 1
       existingIds.add(newId)
       log(`  创建菜单: [${menu.code}] ${menu.name} (ID: ${newId})`)
@@ -368,7 +435,9 @@ async function refreshSuperAdminPermissions(
 ): Promise<{ roleId: number; menuCount: number }> {
   log('刷新超级管理员权限...')
   return inTransaction(client, async () => {
-    const { rows } = await client.query<{ id: number }>("SELECT id FROM roles WHERE code = 'super_admin' LIMIT 1")
+    const { rows } = await client.query<{ id: number }>(
+      "SELECT id FROM roles WHERE code = 'super_admin' LIMIT 1",
+    )
     let roleId = rows[0]?.id
     if (roleId === undefined) {
       const inserted = await client.query<{ id: number }>(
@@ -384,7 +453,9 @@ async function refreshSuperAdminPermissions(
       `INSERT INTO role_menus (role_id, menu_id) SELECT $1::int, id FROM menus ON CONFLICT DO NOTHING`,
       [roleId],
     )
-    const { rows: countRows } = await client.query<{ n: number }>('SELECT count(*)::int AS n FROM menus')
+    const { rows: countRows } = await client.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM menus',
+    )
     const menuCount = countRows[0]?.n ?? 0
     log(`  超级管理员刷新为 ${menuCount} 个菜单权限`)
     return { roleId, menuCount }
@@ -400,7 +471,9 @@ async function initAdminUser(
   log('初始化管理员账号...')
   let created = false
   await inTransaction(client, async () => {
-    const { rows } = await client.query<{ id: number }>("SELECT id FROM admin_users WHERE username = 'admin' LIMIT 1")
+    const { rows } = await client.query<{ id: number }>(
+      "SELECT id FROM admin_users WHERE username = 'admin' LIMIT 1",
+    )
     let userId = rows[0]?.id
     if (userId === undefined) {
       const passwordHash = await generatePasswordHash(adminPassword)
@@ -415,10 +488,10 @@ async function initAdminUser(
       log('  用户已存在: admin')
     }
 
-    const assigned = await client.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
-      userId,
-      roleId,
-    ])
+    const assigned = await client.query(
+      'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [userId, roleId],
+    )
     if (assigned.rowCount) log('  分配角色: 超级管理员')
   })
   log('管理员账号初始化完成\n')
@@ -426,7 +499,9 @@ async function initAdminUser(
 }
 
 /** Reusable entry point (called by setup-once); throws on failure and lets the caller choose the exit code */
-export async function seedRbac(options: SeedRbacOptions): Promise<SeedRbacResult> {
+export async function seedRbac(
+  options: SeedRbacOptions,
+): Promise<SeedRbacResult> {
   const log = options.log ?? console.log
   const incremental = options.incremental ?? false
   const client = new pg.Client({ connectionString: options.databaseUrl })
@@ -450,14 +525,19 @@ export async function seedRbac(options: SeedRbacOptions): Promise<SeedRbacResult
       role = await refreshSuperAdminPermissions(client, log)
       log('角色初始化完成\n')
     }
-    const adminCreated = await initAdminUser(client, role.roleId, options.adminPassword, log)
+    const adminCreated = await initAdminUser(
+      client,
+      role.roleId,
+      options.adminPassword,
+      log,
+    )
 
     log('='.repeat(60))
     log('同步完成！')
     log('='.repeat(60))
     log('\n登录信息：')
     log('  用户名: admin')
-    log("  密码: 使用部署时设置的 ADMIN_PASSWORD（不会写入日志）")
+    log('  密码: 使用部署时设置的 ADMIN_PASSWORD（不会写入日志）')
 
     return {
       menusAdded: menus.added,
@@ -483,17 +563,23 @@ if (isMain) {
   } catch (err) {
     // Exit code 2 for argument errors
     console.error('usage: seed-rbac [--incremental]')
-    console.error(`seed-rbac: error: ${err instanceof Error ? err.message : String(err)}`)
+    console.error(
+      `seed-rbac: error: ${err instanceof Error ? err.message : String(err)}`,
+    )
     process.exit(2)
   }
   const env = (process.env.NODE_ENV ?? 'development') as AppEnv
   loadEnvFiles(env)
   const config = loadConfig()
-  seedRbac({ databaseUrl: config.databaseUrl, adminPassword: config.adminPassword, incremental }).catch(
-    (err: unknown) => {
-      console.error(`\n初始化失败: ${err instanceof Error ? err.message : String(err)}`)
-      if (err instanceof Error && err.stack) console.error(err.stack)
-      process.exit(1)
-    },
-  )
+  seedRbac({
+    databaseUrl: config.databaseUrl,
+    adminPassword: config.adminPassword,
+    incremental,
+  }).catch((err: unknown) => {
+    console.error(
+      `\n初始化失败: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    if (err instanceof Error && err.stack) console.error(err.stack)
+    process.exit(1)
+  })
 }

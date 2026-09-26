@@ -1,5 +1,8 @@
+import KeyActions from '@/modules/gateway/components/KeyActions'
+import ProbeAccount from '@/modules/gateway/components/ProbeAccount'
+import AccountHealth from '@/modules/gateway/components/AccountHealth'
 import { useTranslation } from 'react-i18next'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Plus, RefreshCw, Copy } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
@@ -22,7 +25,7 @@ import {
 } from '@/shared/components/FormFields'
 import ConfirmAction from '@/shared/components/ConfirmAction'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { SearchInput } from '@/shared/components/Filters'
+import { SearchInput, FilterSelect } from '@/shared/components/Filters'
 import { toast } from '@/lib/toast'
 import {
   listGateway,
@@ -41,8 +44,14 @@ const specs = {
     defaults: {
       name: '',
       protocol: 'openai',
+      provider: 'openai-compatible',
+      supported_models: '',
+      default_model: '',
       base_url: 'https://api.openai.com/v1',
       api_key: '',
+      concurrency_limit: 10,
+      weight: 1,
+      priority: 100,
       enabled: true,
     },
   },
@@ -53,6 +62,9 @@ const specs = {
       model: '',
       upstream_id: null,
       upstream_model: '',
+      description: '',
+      upstream_base: '',
+      vision_model: '',
       priority: 100,
       enabled: true,
     },
@@ -64,10 +76,10 @@ const specs = {
       name: '',
       kind: 'personal',
       models: '*',
-      daily_limit: 100000,
-      concurrency_limit: 10,
-      rpm_limit: 60,
-      expires_days: 30,
+      daily_limit: 0,
+      concurrency_limit: 0,
+      rpm_limit: 0,
+      expires_days: 0,
     },
   },
 }
@@ -82,24 +94,31 @@ export default function ResourcePage({ resource }) {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [search, setSearch] = useState(''),
+    [kindFilter, setKindFilter] = useState(''),
+    [page, setPage] = useState(1),
     [open, setOpen] = useState(false),
     [editing, setEditing] = useState(null),
     [token, setToken] = useState('')
+  const loadVersion = useRef(0)
   const can = (action) => hasPermission(`gateway_${resource}_${action}`)
   const load = useCallback(async () => {
+    const current = ++loadVersion.current
     setLoading(true)
     try {
       const r = await listGateway(resource)
+      if (current !== loadVersion.current) return
       setItems(r.items)
       setError('')
     } catch (err) {
-      setError(err.message || '加载失败')
+      if (current === loadVersion.current) setError(err.message || '加载失败')
     } finally {
-      setLoading(false)
+      if (current === loadVersion.current) setLoading(false)
     }
   }, [resource])
   useEffect(() => {
+    const version = loadVersion
     void load()
+    return () => { version.current++ }
   }, [load])
   useEffect(() => {
     if (resource === 'routes')
@@ -109,18 +128,36 @@ export default function ResourcePage({ resource }) {
   }, [resource])
   const edit = (row) => {
     setEditing(row || null)
-    form.reset(row ? { ...row, api_key: '' } : spec.defaults)
+    form.reset(
+      row
+        ? {
+            ...row,
+            api_key: '',
+            ...(resource === 'upstreams'
+              ? { supported_models: (row.supported_models || []).join(', ') }
+              : {}),
+          }
+        : spec.defaults,
+    )
     setOpen(true)
   }
   const save = async (values) => {
     try {
       const body = { ...values }
-      if (resource === 'keys')
+      if (resource === 'keys') {
+        body.expires_days = values.expires_days ? Number(values.expires_days) : null
         body.models = values.models
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean)
-      if (resource === 'upstreams' && !body.api_key) delete body.api_key
+      }
+      if (resource === 'upstreams') {
+        body.supported_models = values.supported_models
+          .split(/[,，\n]/)
+          .map((x) => x.trim())
+          .filter(Boolean)
+        if (!body.api_key) delete body.api_key
+      }
       const r = await saveGateway(resource, body, editing?.id)
       setOpen(false)
       if (r.token) setToken(r.token)
@@ -150,6 +187,11 @@ export default function ResourcePage({ resource }) {
     resource === 'upstreams'
       ? [
           { key: 'name', title: '服务名称', dataIndex: 'name' },
+          { key: 'provider', title: '供应商分类', dataIndex: 'provider' },
+          { key: 'health', title: '账号健康', render: (_, row) => <AccountHealth account={row} /> },
+          { key: 'concurrency_limit', title: '账号并发上限', dataIndex: 'concurrency_limit', align: 'right' },
+          { key: 'account_priority', title: '账号优先级', dataIndex: 'priority', align: 'right' },
+          { key: 'weight', title: '调度权重', dataIndex: 'weight', align: 'right' },
           {
             key: 'protocol',
             title: '协议',
@@ -252,9 +294,11 @@ export default function ResourcePage({ resource }) {
   cols.push({
     key: 'actions',
     title: '操作',
-    width: 150,
+    width: resource === 'routes' ? 150 : 260,
     render: (_, row) => (
       <div className="flex justify-end gap-1">
+        {resource === 'keys' && <KeyActions record={row} canEdit={can('edit')} canRotate={can('rotate')} onToken={setToken} onComplete={load} />}
+        {resource === 'upstreams' && can('test') && <ProbeAccount account={row} onComplete={load} />}
         {resource !== 'keys' && can('edit') && (
           <Button size="sm" variant="ghost" onClick={() => edit(row)}>
             {t('编辑')}
@@ -278,6 +322,9 @@ export default function ResourcePage({ resource }) {
       </div>
     ),
   })
+  const filtered = items.filter(row => (resource !== 'keys' || !kindFilter || row.kind === kindFilter) &&
+    JSON.stringify(row).toLowerCase().includes(search.toLowerCase()))
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(filtered.length / 20)))
   return (
     <>
       <PageHeader
@@ -298,11 +345,12 @@ export default function ResourcePage({ resource }) {
         }
       />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="搜索名称、模型或地址"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput value={search} onChange={value => {setSearch(value);setPage(1)}} placeholder="搜索名称、模型或地址" />
+          {resource === 'keys' && <FilterSelect ariaLabel="类型" placeholder="类型" value={kindFilter}
+            onChange={value => {setKindFilter(value);setPage(1)}}
+            options={[{label:'个人',value:'personal'},{label:'应用',value:'application'},{label:'设备授权',value:'device'}]} />}
+        </div>
         <span className="text-muted-foreground text-sm">
           {items.length}
           {t('条配置')}
@@ -318,12 +366,11 @@ export default function ResourcePage({ resource }) {
       ) : (
         <DataTable
           columns={cols}
-          data={items.filter((x) =>
-            JSON.stringify(x).toLowerCase().includes(search.toLowerCase()),
-          )}
+          data={filtered.slice((currentPage - 1) * 20, currentPage * 20)}
+          pagination={{page:currentPage,perPage:20,total:filtered.length,onChange:setPage}}
           loading={loading}
           emptyDescription={
-            resource === 'upstreams'
+            items.length ? '暂无匹配结果，请调整筛选条件。' : resource === 'upstreams'
               ? '添加一个模型服务，开始接入上游。'
               : resource === 'routes'
                 ? '先添加模型服务，再配置对外模型。'
@@ -340,7 +387,7 @@ export default function ResourcePage({ resource }) {
             ? '密钥加密保存，编辑时留空可保留原值。'
             : resource === 'routes'
               ? '优先级数字越小越优先；相同对外模型可配置多个上游。'
-              : '密钥仅展示一次。每日配额按 UTC 日期统计，0 表示不限。'
+              : '密钥仅展示一次。每日配额按网关业务时区统计，默认 Asia/Shanghai，0 表示不限。'
         }
         form={form}
         onSubmit={save}
@@ -355,11 +402,33 @@ export default function ResourcePage({ resource }) {
         )}
         {resource === 'upstreams' && (
           <>
+            <FormNumber control={form.control} name="weight" label="调度权重" min={1} max={10000} rules={{required:true,min:1,max:10000}} />
+            <FormNumber control={form.control} name="concurrency_limit" label="账号并发上限" min={1} max={1000} rules={{ required: true, min: 1, max: 1000 }} />
+            <FormInput
+              control={form.control}
+              name="provider"
+              label="供应商分类"
+              description="仅用于画像与用量分类，请求格式由协议决定。"
+              rules={{ required: true, maxLength: 64 }}
+            />
             <FormSelect
               control={form.control}
               name="protocol"
               label="协议"
               options={protocols}
+            />
+            <FormNumber control={form.control} name="priority" label="账号优先级" description="用于自动账号池，数值越大越优先。" min={1} max={1000} rules={{required:true,min:1,max:1000,validate:value=>Number.isInteger(value)||t('请输入整数')}} />
+            <FormInput
+              control={form.control}
+              name="supported_models"
+              label="账号支持模型"
+              description="填写实际上游模型，以逗号分隔；模型探测不会自动修改此配置。"
+            />
+            <FormInput
+              control={form.control}
+              name="default_model"
+              label="账号默认模型"
+              description="可留空；填写后自动计入账号支持模型。"
             />
             <FormInput
               control={form.control}
@@ -403,6 +472,23 @@ export default function ResourcePage({ resource }) {
               label="上游实际模型名称"
               rules={{ required: '请输入上游模型名称' }}
             />
+            <FormInput
+              control={form.control}
+              name="description"
+              label="路由说明"
+              rules={{ maxLength: 255 }}
+            />
+            <FormInput
+              control={form.control}
+              name="upstream_base"
+              label="路由上游地址覆盖"
+              description="留空使用账号地址；只能修改同源路径，不能更换域名、协议或端口。"
+            />
+            <FormInput
+              control={form.control}
+              name="vision_model"
+              label="含图模型（仅 coati-auto 使用）"
+            />
             <FormNumber
               control={form.control}
               name="priority"
@@ -437,30 +523,30 @@ export default function ResourcePage({ resource }) {
             <FormNumber
               control={form.control}
               name="daily_limit"
-              label="每日 Token 配额"
+              label="每日 Token 配额（0 不额外限制）"
               min={0}
               step={1}
             />
             <FormNumber
               control={form.control}
               name="concurrency_limit"
-              label="最大并发请求"
-              min={1}
+              label="最大并发请求（0 不额外限制）"
+              min={0}
               step={1}
             />
             <FormNumber
               control={form.control}
               name="rpm_limit"
-              label="每分钟请求上限"
-              min={1}
+              label="每分钟请求上限（0 不额外限制）"
+              min={0}
               step={1}
             />
             <FormNumber
               control={form.control}
               name="expires_days"
-              label="有效天数"
-              min={1}
-              max={365}
+              label="有效天数（0 为不过期）"
+              min={0}
+              max={3650}
               step={1}
             />
           </>

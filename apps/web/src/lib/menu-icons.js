@@ -1,5 +1,8 @@
 import {
   Activity,
+  KeyRound,
+  Server,
+  Search,
   AppWindow,
   BarChart3,
   Bell,
@@ -39,6 +42,9 @@ import {
  */
 const SEMI_TO_LUCIDE = {
   IconActivity: Activity,
+  IconKey: KeyRound,
+  IconServer: Server,
+  IconSearch: Search,
   IconApps: AppWindow,
   IconArticle: Newspaper,
   IconBarChart: BarChart3,

@@ -1,4 +1,4 @@
-import ResourcePage from '@/modules/gateway/components/ResourcePage'
+import AccountsPage from '@/modules/gateway/components/AccountsPage'
 export default function Page() {
-  return <ResourcePage resource="upstreams" />
+  return <AccountsPage />
 }

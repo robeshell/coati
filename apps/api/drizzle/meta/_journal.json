@@ -29,6 +29,272 @@
       "when": 1790341596964,
       "tag": "0003_gateway_query_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790346095812,
+      "tag": "0004_gateway_usage_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790346880098,
+      "tag": "0005_gateway_upstream_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790347216403,
+      "tag": "0006_gateway_account_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790347555377,
+      "tag": "0007_gateway_account_weight",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790347824957,
+      "tag": "0008_gateway_session_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790348467498,
+      "tag": "0009_gateway_user_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790349444695,
+      "tag": "0010_gateway_probe_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790350386740,
+      "tag": "0011_gateway_key_rotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790350828064,
+      "tag": "0012_gateway_key_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790351294575,
+      "tag": "0013_gateway_default_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790351644509,
+      "tag": "0014_gateway_pat_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790352107074,
+      "tag": "0015_gateway_cache_miss",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790352322878,
+      "tag": "0016_gateway_request_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790352901277,
+      "tag": "0017_gateway_http_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790355012819,
+      "tag": "0018_gateway_vision_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790355012820,
+      "tag": "0019_gateway_device_rate_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790364888852,
+      "tag": "0020_gateway_execution_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790365215151,
+      "tag": "0021_gateway_provider_category",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790365482451,
+      "tag": "0022_gateway_quota_timestamp",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790367258338,
+      "tag": "0023_gateway_route_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790367762576,
+      "tag": "0024_gateway_account_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790368793841,
+      "tag": "0025_gateway_public_routes",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790370687611,
+      "tag": "0026_gateway_route_migrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790371770471,
+      "tag": "0027_gateway_route_updated_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790373122879,
+      "tag": "0028_gateway_personal_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790374056078,
+      "tag": "0029_gateway_channel_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790375553042,
+      "tag": "0030_gateway_account_headers",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790376138462,
+      "tag": "0031_gateway_account_timeout",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790376915676,
+      "tag": "0032_gateway_account_proxy",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790384235574,
+      "tag": "0033_gateway_account_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790386861462,
+      "tag": "0034_gateway_model_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790387760297,
+      "tag": "0035_gateway_cache_tests",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790389734610,
+      "tag": "0036_gateway_search_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790393606220,
+      "tag": "0037_gateway_legacy_imports",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790414807837,
+      "tag": "0038_gateway_binding_recency",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790418252207,
+      "tag": "0039_gateway_device_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790418601476,
+      "tag": "0040_gateway_probe_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790422344394,
+      "tag": "0041_gateway_personal_export_group",
+      "breakpoints": true
     }
   ]
 }

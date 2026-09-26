@@ -27,6 +27,7 @@ export interface AppConfig {
   adminPassword: string
   /** Request body limit (bytes), MAX_CONTENT_LENGTH */
   maxContentLength: number
+  trustedProxies: string[]
   sessionTtlHours: number
   /** SESSION_COOKIE_SECURE: true/false forces it; empty = auto (by request protocol, Secure only over TLS) */
   sessionCookieSecure: boolean | 'auto'
@@ -89,6 +90,7 @@ const envSchema = z.object({
   TEST_DATABASE_URL: z.string().optional(),
   SECRET_KEY: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
+  TRUSTED_PROXIES: z.string().default(''),
   MAX_CONTENT_LENGTH: intFromEnv(16 * 1024 * 1024),
   SESSION_TTL_HOURS: intFromEnv(8),
   SESSION_COOKIE_SECURE: z.string().optional().default(''),
@@ -186,6 +188,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     adminUsername: 'admin',
     adminPassword: required('ADMIN_PASSWORD', parsed.ADMIN_PASSWORD, env, 'admin123'),
     maxContentLength: parsed.MAX_CONTENT_LENGTH,
+    trustedProxies: parsed.TRUSTED_PROXIES.split(',').map((value) => value.trim()).filter(Boolean),
     sessionTtlHours: parsed.SESSION_TTL_HOURS,
     sessionCookieSecure: parsed.SESSION_COOKIE_SECURE.trim() === '' ? 'auto' : isTruthy(parsed.SESSION_COOKIE_SECURE),
     corsOrigins: parsed.CORS_ORIGINS.split(',')

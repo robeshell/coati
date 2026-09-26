@@ -12,7 +12,7 @@ flowchart LR
   B --> C[Service / repository]
   D[Applications / standard SDKs] --> E[Gateway APIs: bearer key]
   E --> F[Validate model and reserve quota]
-  F --> G[Native protocol transport]
+  F --> G[Protocol adapters + controlled transport]
   G --> H[Upstream provider]
   H --> I[SSE parser / usage accounting]
   I --> D
@@ -28,8 +28,8 @@ No database transaction or connection is held for the duration of upstream strea
 1. Authenticate the gateway key independently of console cookies. Check expiry/revocation, allowed model, enabled upstream and route.
 2. In a short transaction, lock the key row and reserve estimated input plus requested output tokens. Enforce per-key UTC-day token budget, concurrency, and requests per minute. `daily_limit=0` means unlimited; this requires care when issuing keys. Token estimates are not model tokenization guarantees.
 3. Release the transaction before I/O. Use pooled HTTP connections, a 180s overall deadline and a 30s stream-idle deadline. The client disconnect aborts the upstream request.
-4. Rewrite the model name in the request and response. Forward native protocol payloads; SSE is parsed across arbitrary byte/event boundaries with a 1 MiB event limit and bounded downstream buffering. Responses storage/background/previous-response chaining is unsupported; storage is forced off. Multiple completions (`n>1`) are rejected.
-5. Retry only explicit 429/503 responses before streaming begins, across at most three configured routes in priority order. Connection failures, streams that have begun and ambiguous completion failures are not automatically retried. This reduces duplicate generation/billing risk. This is not the legacy adaptive scheduling implementation.
+4. Rewrite the model name in the request and response. Use the selected upstream protocol for URL, authentication, request conversion and upstream usage accounting; return the client protocol. Native payloads retain their passthrough path. SSE is parsed across arbitrary byte/event boundaries with a 1 MiB event limit and bounded downstream buffering. Cross-protocol state is additionally limited by a 16 MiB cumulative source-event budget. Converted completion is deferred until a verified source terminal and successful settlement; late Chat usage is consumed before final emission. Responses storage/background/previous-response chaining is unsupported; storage is forced off. Multiple completions (`n>1`) are rejected.
+5. Retry only explicit 429/503 responses before streaming begins, across at most three compatible configured routes in priority order, after request conversion capability filtering. Connection failures, streams that have begun and ambiguous completion failures are not automatically retried. This reduces duplicate generation/billing risk. This is not the legacy adaptive scheduling implementation.
 6. Settle a reservation once, recording usage source (`upstream` or `estimated`), status, first-event latency, total latency, and upstream attempts. Missing final stream events are errors; never fabricate `[DONE]` on failure. If the process dies before settlement, the expiry reaper marks the request interrupted and provisionally charges its reservation.
 
 ## Data model

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 /**
  * Authentication and authorization
  *
@@ -18,7 +19,7 @@ function isApiRequest(request: FastifyRequest): boolean {
 
 /** Login-required preHandler */
 export const loginRequired: preHandlerAsyncHookHandler = async (request, reply) => {
-  if (!request.session.get('logged_in')) {
+  if (!request.session.get('logged_in') || !(await getCurrentAdminUser(request))) {
     if (isApiRequest(request)) {
       return reply.status(401).send({ error: '未授权访问', redirect: LOGIN_PAGE })
     }
@@ -76,9 +77,16 @@ export async function loadAdminsWithRolesByIds(db: Executor, ids: number[]): Pro
 export async function getCurrentAdminUser(request: FastifyRequest): Promise<AdminUserWithRoles | null> {
   if (request.currentAdminUser !== undefined) return request.currentAdminUser
 
-  const username = request.session.get('username')
-  const user = username ? await loadAdminWithRoles(request.server.db, username) : null
-  request.currentAdminUser = user
+  const id=request.session.get('user_id')
+  const row=Number.isSafeInteger(id) ? await findAdminRow(request.server.db,eq(admin_users.id,id!)) : null
+  const user=row?flattenAdmin(row):null
+  if(!user || request.session.get('credential_version')!==sessionCredentialVersion(user.password_hash)) {
+    request.currentAdminUser=null
+    request.session.delete()
+    return null
+  }
+  if (request.session.get('username') !== user.username) request.session.set('username', user.username)
+  request.currentAdminUser=user
   return user
 }
 
@@ -106,10 +114,13 @@ export function menuPermissionRequired(menuCode: string): preHandlerAsyncHookHan
     }
     const user = await getCurrentAdminUser(request)
     if (!user) {
-      return api ? reply.status(404).send({ error: '用户不存在' }) : reply.redirect(LOGIN_PAGE)
+      return api ? reply.status(401).send({ error: '未登录' }) : reply.redirect(LOGIN_PAGE)
     }
     if (!userHasMenuCode(user, menuCode)) {
       return reply.status(403).send({ error: api ? `缺少权限: ${menuCode}` : '无权限' })
     }
   }
 }
+
+/** Stored inside the authenticated encrypted cookie, not a public password hash. */
+export const sessionCredentialVersion = (hash: string) => createHash('sha256').update(hash).digest('hex')
