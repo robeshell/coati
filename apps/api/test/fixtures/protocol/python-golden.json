@@ -1,0 +1,4541 @@
+{
+  "source": "portal/backend/app/agent/service/protocol_bridge.py",
+  "sha256": "62e5c26c879ef756fbf083d49751f8891845a2431f987e0328357e12639c2e2f",
+  "testSha256": "ad781696c8ef2051fd3491bfb25a2637f8a6c0bc97d85eb35a9e9766b78d1ad4",
+  "pythonTestsPassed": 43,
+  "note": "JSON converter calls; public stream traces are exported separately in python-stream-golden.json.",
+  "cases": [
+    {
+      "test": "test_anthropic_to_openai_maps_system_tools_and_thinking",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "coati-auto",
+          "system": [
+            {
+              "type": "text",
+              "text": "be brief"
+            }
+          ],
+          "max_tokens": 64,
+          "messages": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "plan",
+                  "signature": "sig"
+                },
+                {
+                  "type": "tool_use",
+                  "id": "tool_1",
+                  "name": "read",
+                  "input": {
+                    "path": "a.py"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "tool_1",
+                  "content": "ok"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "description": "read file",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "auto"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "coati-auto",
+        "messages": [
+          {
+            "role": "system",
+            "content": "be brief"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "plan",
+            "tool_calls": [
+              {
+                "id": "tool_1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\": \"a.py\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "tool_1",
+            "content": "ok"
+          }
+        ],
+        "stream": false,
+        "max_tokens": 64,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "read file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "test": "test_openai_to_anthropic_maps_reasoning_and_tools",
+      "function": "openai_to_anthropic_message",
+      "args": [
+        {
+          "id": "chatcmpl-1",
+          "model": "gpt-4o",
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "think",
+                "tool_calls": [
+                  {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                      "name": "read",
+                      "arguments": "{\"path\":\"a.py\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 5
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "coati-auto"
+      },
+      "expected": {
+        "id": "chatcmpl-1",
+        "type": "message",
+        "role": "assistant",
+        "model": "coati-auto",
+        "content": [
+          {
+            "type": "text",
+            "text": "think"
+          },
+          {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "read",
+            "input": {
+              "path": "a.py"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 5
+        }
+      }
+    },
+    {
+      "test": "test_openai_to_anthropic_rejects_malformed_tool_arguments",
+      "function": "openai_to_anthropic_message",
+      "args": [
+        {
+          "choices": [
+            {
+              "message": {
+                "tool_calls": [
+                  {
+                    "function": {
+                      "name": "read",
+                      "arguments": "{not-json"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": "上游工具调用参数不是有效 JSON，无法转换为 Anthropic tool_use"
+    },
+    {
+      "test": "test_openai_to_anthropic_rejects_multiple_choices_instead_of_dropping_them",
+      "function": "openai_to_anthropic_message",
+      "args": [
+        {
+          "choices": [
+            {
+              "message": {}
+            },
+            {
+              "message": {}
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": "Anthropic Messages 不支持 OpenAI 的多候选响应，请将 n 设置为 1"
+    },
+    {
+      "test": "test_protocol_matrix_uses_direct_request_and_response_bridges",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "glm",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "max_tokens": 32
+        },
+        "openai",
+        "anthropic-messages"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "glm",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 32
+      }
+    },
+    {
+      "test": "test_protocol_matrix_uses_direct_request_and_response_bridges",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "claude",
+          "system": "brief",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        },
+        "anthropic",
+        "openai-responses"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "claude",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 4096,
+        "instructions": "brief"
+      }
+    },
+    {
+      "test": "test_protocol_matrix_uses_direct_request_and_response_bridges",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "msg-1",
+          "type": "message",
+          "model": "glm",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "usage": {
+            "input_tokens": 2,
+            "output_tokens": 1
+          }
+        },
+        "anthropic-messages",
+        "openai",
+        "glm-alias"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg-1",
+        "object": "chat.completion",
+        "model": "glm-alias",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "ok"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2,
+          "completion_tokens": 1
+        }
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "claude",
+          "system": "brief",
+          "max_tokens": 64,
+          "thinking": {
+            "type": "enabled"
+          },
+          "messages": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "plan"
+                },
+                {
+                  "type": "tool_use",
+                  "id": "call_1",
+                  "name": "read",
+                  "input": {
+                    "path": "a.py"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "claude",
+        "input": [
+          {
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "plan"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read",
+            "arguments": "{\"path\": \"a.py\"}"
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 64,
+        "instructions": "brief",
+        "reasoning": {
+          "effort": "medium"
+        }
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "responses_to_anthropic_body",
+      "args": [
+        {
+          "model": "glm",
+          "instructions": "brief",
+          "max_output_tokens": 64,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hi"
+                }
+              ]
+            },
+            {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "plan"
+                }
+              ],
+              "encrypted_content": "sig"
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_1",
+              "name": "read",
+              "arguments": "{\"path\":\"a.py\"}"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "glm",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "plan",
+                "signature": "sig"
+              },
+              {
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read",
+                "input": {
+                  "path": "a.py"
+                }
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 64,
+        "system": "brief"
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "anthropic_to_responses_message",
+      "args": [
+        {
+          "id": "msg-1",
+          "model": "claude",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "plan",
+              "signature": "sig"
+            },
+            {
+              "type": "tool_use",
+              "id": "call_1",
+              "name": "read",
+              "input": {
+                "path": "a.py"
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "usage": {
+            "input_tokens": 3,
+            "cache_read_input_tokens": 7,
+            "output_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg-1",
+        "object": "response",
+        "created_at": 1700000000,
+        "status": "completed",
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "claude",
+        "output": [
+          {
+            "id": "rs_coati",
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "plan"
+              }
+            ],
+            "encrypted_content": "sig"
+          },
+          {
+            "id": "call_1",
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read",
+            "arguments": "{\"path\": \"a.py\"}"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 10,
+          "input_tokens_details": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 7
+          },
+          "output_tokens": 2,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 12
+        }
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "anthropic_to_responses_message",
+      "args": [
+        {
+          "id": "msg-cache-write",
+          "model": "claude",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "usage": {
+            "input_tokens": 3,
+            "cache_read_input_tokens": 7,
+            "cache_creation_input_tokens": 2,
+            "output_tokens": 1
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg-cache-write",
+        "object": "response",
+        "created_at": 1700000000,
+        "status": "completed",
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "claude",
+        "output": [
+          {
+            "id": "msg_coati",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "ok",
+                "annotations": []
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 12,
+          "input_tokens_details": {
+            "cache_write_tokens": 2,
+            "cached_tokens": 7
+          },
+          "output_tokens": 1,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 13
+        }
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp-1",
+          "model": "glm",
+          "status": "completed",
+          "output": [
+            {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "plan"
+                }
+              ],
+              "encrypted_content": "sig"
+            },
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "ok"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_1",
+              "name": "read",
+              "arguments": "{\"path\":\"a.py\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "input_tokens_details": {
+              "cached_tokens": 7
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp-1",
+        "type": "message",
+        "role": "assistant",
+        "model": "glm",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "plan",
+            "signature": "sig"
+          },
+          {
+            "type": "text",
+            "text": "ok"
+          },
+          {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "read",
+            "input": {
+              "path": "a.py"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 2,
+          "cache_read_input_tokens": 7
+        }
+      }
+    },
+    {
+      "test": "test_direct_anthropic_responses_converters_preserve_reasoning_tools_and_cache",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp-cache-write",
+          "model": "glm",
+          "status": "completed",
+          "output": [
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "ok"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 1,
+            "input_tokens_details": {
+              "cache_write_tokens": 2,
+              "cached_tokens": 7
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp-cache-write",
+        "type": "message",
+        "role": "assistant",
+        "model": "glm",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 7,
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_start",
+          "message": {
+            "id": "msg-1",
+            "model": "glm"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "content_block_start",
+          "index": 1,
+          "content_block": {
+            "type": "text",
+            "text": ""
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "content_block_delta",
+          "index": 1,
+          "delta": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "end_turn"
+          },
+          "usage": {
+            "input_tokens": 1,
+            "output_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_can_be_converted_to_openai_chat_stream",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_stop"
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_merges_start_cache_usage_into_final_chat_usage",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_start",
+          "message": {
+            "id": "msg-usage",
+            "usage": {
+              "input_tokens": 3,
+              "cache_read_input_tokens": 7,
+              "cache_creation_input_tokens": 2
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_anthropic_stream_merges_start_cache_usage_into_final_chat_usage",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_delta",
+          "delta": {
+            "stop_reason": "end_turn"
+          },
+          "usage": {
+            "output_tokens": 5
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_failed_source_stream_events_raise_instead_of_emitting_done",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "error",
+          "error": {
+            "type": "overloaded_error",
+            "message": "overloaded"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": "overloaded"
+    },
+    {
+      "test": "test_failed_source_stream_events_raise_instead_of_emitting_done",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "response.failed",
+          "response": {
+            "status": "failed",
+            "error": {
+              "type": "server_error",
+              "message": "upstream failed"
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": "upstream failed"
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "message_start",
+          "message": {
+            "id": "msg-1",
+            "model": "glm"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_stream_matrix_builds_cross_protocol_pipelines",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp-1",
+            "model": "gpt"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "test_responses_to_openai_maps_input_tools_and_history",
+      "function": "responses_to_openai_body",
+      "args": [
+        {
+          "model": "coati-auto",
+          "instructions": "short",
+          "max_output_tokens": 64,
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hi"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_1",
+              "name": "read",
+              "arguments": "{\"path\":\"a.py\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_1",
+              "output": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "read",
+              "description": "read file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "tool_choice": "auto"
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "coati-auto",
+        "messages": [
+          {
+            "role": "system",
+            "content": "short"
+          },
+          {
+            "role": "user",
+            "content": "hi"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\":\"a.py\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "ok"
+          }
+        ],
+        "stream": false,
+        "max_tokens": 64,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "read file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "test": "test_responses_to_openai_merges_additional_tools_from_input",
+      "function": "responses_to_openai_body",
+      "args": [
+        {
+          "model": "coati-auto",
+          "input": [
+            {
+              "type": "additional_tools",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "search",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "coati-auto",
+        "messages": [
+          {
+            "role": "user",
+            "content": ""
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "search",
+              "description": "",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "test_responses_builtin_tools_are_rejected_on_non_responses_upstreams",
+      "function": "responses_to_openai_body",
+      "args": [
+        {
+          "model": "gpt",
+          "input": "search this",
+          "tools": [
+            {
+              "type": "web_search_preview"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": "Responses 内置工具 web_search_preview 无法转换为 Chat Completions，请使用 Responses 原生上游"
+    },
+    {
+      "test": "test_responses_builtin_tools_are_rejected_on_non_responses_upstreams",
+      "function": "responses_to_anthropic_body",
+      "args": [
+        {
+          "model": "gpt",
+          "input": "search this",
+          "tools": [
+            {
+              "type": "web_search_preview"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": "Responses 内置工具 web_search_preview 无法转换为 Anthropic，请使用 Responses 原生上游"
+    },
+    {
+      "test": "test_anthropic_nonstream_usage_includes_cache_read_and_creation_tokens",
+      "function": "anthropic_to_openai_message",
+      "args": [
+        {
+          "id": "msg-cache",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "usage": {
+            "input_tokens": 3,
+            "cache_read_input_tokens": 7,
+            "cache_creation_input_tokens": 2,
+            "output_tokens": 5
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg-cache",
+        "object": "chat.completion",
+        "model": "",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "ok"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 5,
+          "prompt_tokens_details": {
+            "cached_tokens": 7
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "test_openai_to_responses_maps_reasoning_and_tools",
+      "function": "openai_to_responses_message",
+      "args": [
+        {
+          "id": "chatcmpl-1",
+          "model": "gpt-4o",
+          "choices": [
+            {
+              "finish_reason": "tool_calls",
+              "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "think",
+                "tool_calls": [
+                  {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                      "name": "read",
+                      "arguments": "{\"path\":\"a.py\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 3,
+            "completion_tokens": 5
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "coati-auto"
+      },
+      "expected": {
+        "id": "chatcmpl-1",
+        "object": "response",
+        "created_at": 1700000000,
+        "status": "completed",
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "coati-auto",
+        "output": [
+          {
+            "id": "rs_chatcmpl-1_0",
+            "type": "reasoning",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "think"
+              }
+            ]
+          },
+          {
+            "id": "call_1",
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read",
+            "arguments": "{\"path\":\"a.py\"}"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 3,
+          "input_tokens_details": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "output_tokens": 5,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 8
+        }
+      }
+    },
+    {
+      "test": "test_web_search_call_does_not_force_tool_use_stop_reason",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp_1",
+          "status": "completed",
+          "output": [
+            {
+              "type": "web_search_call",
+              "id": "ws_1",
+              "action": {
+                "query": "coati gateway"
+              }
+            },
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "找到了"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 4
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_ws_1",
+            "name": "web_search",
+            "input": {
+              "query": "coati gateway"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_ws_1",
+            "content": []
+          },
+          {
+            "type": "text",
+            "text": "找到了"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 4
+        }
+      }
+    },
+    {
+      "test": "test_web_search_call_prefers_the_plural_queries_field",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp_q",
+          "status": "completed",
+          "output": [
+            {
+              "type": "web_search_call",
+              "id": "ws_q",
+              "status": "completed",
+              "action": {
+                "type": "search",
+                "query": "old",
+                "queries": [
+                  "new query"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp_q",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_ws_q",
+            "name": "web_search",
+            "input": {
+              "query": "new query"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_ws_q",
+            "content": []
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "test": "test_web_search_call_emits_the_paired_result_block",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp_s",
+          "status": "completed",
+          "output": [
+            {
+              "type": "web_search_call",
+              "id": "ws_s",
+              "status": "completed",
+              "action": {
+                "type": "search",
+                "queries": [
+                  "coati"
+                ],
+                "sources": [
+                  {
+                    "type": "url",
+                    "url": "https://example.com/a"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp_s",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_ws_s",
+            "name": "web_search",
+            "input": {
+              "query": "coati"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_ws_s",
+            "content": [
+              {
+                "type": "web_search_result",
+                "url": "https://example.com/a",
+                "title": "https://example.com/a"
+              }
+            ]
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "test": "test_failed_web_search_call_becomes_an_error_object_not_a_list",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp_f",
+          "status": "completed",
+          "output": [
+            {
+              "type": "web_search_call",
+              "id": "ws_f",
+              "status": "failed",
+              "action": {
+                "type": "search",
+                "queries": [
+                  "boom"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp_f",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_ws_f",
+            "name": "web_search",
+            "input": {
+              "query": "boom"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_ws_f",
+            "content": {
+              "type": "web_search_tool_result_error",
+              "error_code": "unavailable"
+            }
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "test": "test_real_function_call_still_sets_tool_use_stop_reason",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp_2",
+          "status": "completed",
+          "output": [
+            {
+              "type": "web_search_call",
+              "id": "ws_2",
+              "action": {
+                "query": "x"
+              }
+            },
+            {
+              "type": "function_call",
+              "call_id": "fc_1",
+              "name": "Bash",
+              "arguments": "{\"cmd\":\"ls\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 5,
+            "output_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp_2",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "server_tool_use",
+            "id": "srvtoolu_ws_2",
+            "name": "web_search",
+            "input": {
+              "query": "x"
+            }
+          },
+          {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_ws_2",
+            "content": []
+          },
+          {
+            "type": "tool_use",
+            "id": "fc_1",
+            "name": "Bash",
+            "input": {
+              "cmd": "ls"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 5,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "test_parallel_tool_results_are_merged_into_one_user_turn",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "查两件事"
+            },
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "c1",
+                  "type": "function",
+                  "function": {
+                    "name": "a",
+                    "arguments": "{}"
+                  }
+                },
+                {
+                  "id": "c2",
+                  "type": "function",
+                  "function": {
+                    "name": "b",
+                    "arguments": "{}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "c1",
+              "content": "结果一"
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "c2",
+              "content": "结果二"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "查两件事"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              },
+              {
+                "type": "tool_use",
+                "id": "c1",
+                "name": "a",
+                "input": {}
+              },
+              {
+                "type": "tool_use",
+                "id": "c2",
+                "name": "b",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "c1",
+                "content": "结果一"
+              },
+              {
+                "type": "tool_result",
+                "tool_use_id": "c2",
+                "content": "结果二"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_empty_content_messages_are_dropped",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": ""
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_reasoning_content_becomes_text_not_an_unsigned_thinking_block",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "assistant",
+              "content": "答案",
+              "reasoning_content": "推理过程"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "推理过程"
+              },
+              {
+                "type": "text",
+                "text": "答案"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_tool_choice_is_dropped_when_there_are_no_tools",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "tool_choice": "auto",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_tool_choice_is_dropped_when_there_are_no_tools",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "tool_choice": {
+            "type": "auto"
+          },
+          "max_tokens": 16,
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 16
+      }
+    },
+    {
+      "test": "test_tool_choice_is_dropped_when_there_are_no_tools",
+      "function": "openai_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "tool_choice": "auto",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "test": "test_response_format_is_refused_rather_than_silently_dropped",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "response_format": {
+            "type": "json_object"
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": "Anthropic Messages 不支持 response_format=json_object，请路由到 OpenAI 兼容账号"
+    },
+    {
+      "test": "test_response_format_is_refused_rather_than_silently_dropped",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "response_format": {
+            "type": "text"
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_tool_call_only_assistant_turn_makes_no_empty_responses_item",
+      "function": "openai_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "c1",
+                  "type": "function",
+                  "function": {
+                    "name": "a",
+                    "arguments": "{}"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "function_call",
+            "call_id": "c1",
+            "name": "a",
+            "arguments": "{}"
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "test": "test_web_search_options_maps_to_the_responses_native_tool",
+      "function": "openai_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "web_search_options": {
+            "search_context_size": "high",
+            "user_location": {
+              "type": "approximate",
+              "approximate": {
+                "city": "Hangzhou",
+                "country": "CN"
+              }
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "web_search",
+            "search_context_size": "high",
+            "user_location": {
+              "city": "Hangzhou",
+              "country": "CN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "test_web_search_options_is_refused_for_anthropic_upstreams",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "web_search_options": {
+            "search_context_size": "high"
+          }
+        }
+      ],
+      "kwargs": {},
+      "error": "Anthropic Messages 不支持 Chat 的 web_search_options，请路由到 OpenAI 兼容账号，或改用 Anthropic 的 web_search server tool"
+    },
+    {
+      "test": "test_tool_result_blocks_are_flattened_for_responses_output",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "max_tokens": 64,
+          "messages": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "c1",
+                  "name": "web_search",
+                  "input": {
+                    "query": "x"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "c1",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "搜索结果正文"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "function_call",
+            "call_id": "c1",
+            "name": "web_search",
+            "arguments": "{\"query\": \"x\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": "搜索结果正文"
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 64
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "user": "u-42"
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096,
+        "metadata": {
+          "user_id": "u-42"
+        }
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "openai_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "user": "u-42"
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "user": "u-42"
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "m",
+          "max_tokens": 16,
+          "metadata": {
+            "user_id": "u-42"
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "stream": false,
+        "max_tokens": 16,
+        "user": "u-42"
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "max_tokens": 16,
+          "metadata": {
+            "user_id": "u-42"
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 16,
+        "user": "u-42"
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "responses_to_openai_body",
+      "args": [
+        {
+          "model": "m",
+          "user": "u-42",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ],
+        "stream": false,
+        "user": "u-42"
+      }
+    },
+    {
+      "test": "test_end_user_identity_survives_every_conversion",
+      "function": "responses_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "user": "u-42",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096,
+        "metadata": {
+          "user_id": "u-42"
+        }
+      }
+    },
+    {
+      "test": "test_no_user_identity_means_no_injected_field",
+      "function": "openai_to_anthropic_body",
+      "args": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_mid_conversation_system_message_becomes_a_developer_input",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "max_tokens": 64,
+          "messages": [
+            {
+              "role": "user",
+              "content": "说一句话。"
+            },
+            {
+              "role": "system",
+              "content": "简短回答。"
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "好的。"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "说一句话。"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "developer",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "简短回答。"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "好的。"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 64
+      }
+    },
+    {
+      "test": "test_no_input_item_ever_carries_output_text_for_a_non_assistant_role",
+      "function": "anthropic_to_responses_body",
+      "args": [
+        {
+          "model": "m",
+          "max_tokens": 64,
+          "messages": [
+            {
+              "role": "system",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "b"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "m",
+        "input": [
+          {
+            "type": "message",
+            "role": "developer",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "a"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "b"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 64
+      }
+    },
+    {
+      "test": "test_responses_developer_items_become_top_level_anthropic_system",
+      "function": "responses_to_anthropic_body",
+      "args": [
+        {
+          "model": "claude",
+          "instructions": "global rule",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            },
+            {
+              "type": "message",
+              "role": "developer",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "never reveal secrets"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "claude",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096,
+        "system": "global rule\nnever reveal secrets"
+      }
+    },
+    {
+      "test": "test_unsigned_responses_reasoning_is_downgraded_to_anthropic_text",
+      "function": "responses_to_anthropic_body",
+      "args": [
+        {
+          "model": "claude",
+          "input": [
+            {
+              "type": "reasoning",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "internal plan"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "claude",
+        "messages": [
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "internal plan"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096
+      }
+    },
+    {
+      "test": "test_anthropic_tool_result_stays_before_residual_user_text",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "gpt",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "call_1",
+                  "content": "done"
+                },
+                {
+                  "type": "text",
+                  "text": "now summarize"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "gpt",
+        "messages": [
+          {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "done"
+          },
+          {
+            "role": "user",
+            "content": "now summarize"
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "test": "test_responses_refusal_is_preserved_as_visible_text",
+      "function": "responses_to_anthropic_message",
+      "args": [
+        {
+          "id": "resp-refusal",
+          "status": "completed",
+          "output": [
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "refusal",
+                  "refusal": "不能帮助你"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp-refusal",
+        "type": "message",
+        "role": "assistant",
+        "model": "",
+        "content": [
+          {
+            "type": "text",
+            "text": "不能帮助你"
+          }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "test": "test_responses_refusal_is_preserved_as_visible_text",
+      "function": "stream_error_message",
+      "args": [
+        {
+          "type": "response.refusal.done",
+          "refusal": "不能帮助你"
+        }
+      ],
+      "kwargs": {},
+      "expected": null
+    },
+    {
+      "test": "migration_anthropic_images_tool_order_and_user",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "public",
+          "stream": true,
+          "temperature": 0,
+          "top_p": 0.8,
+          "stop_sequences": [
+            "END"
+          ],
+          "metadata": {
+            "user_id": "user-1"
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result follows"
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "url",
+                    "url": "https://example.invalid/image.png"
+                  }
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "AA=="
+                  }
+                },
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "call-1",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ok"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "input_schema": {}
+            }
+          ],
+          "tool_choice": {
+            "type": "tool",
+            "name": "read"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": "ok"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "result follows"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "https://example.invalid/image.png"
+                }
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AA=="
+                }
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "temperature": 0,
+        "top_p": 0.8,
+        "stop": [
+          "END"
+        ],
+        "user": "user-1",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "read"
+          }
+        }
+      }
+    },
+    {
+      "test": "migration_tool_choice_none",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "public",
+          "tools": [
+            {
+              "name": "read"
+            }
+          ],
+          "tool_choice": {
+            "type": "none"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ],
+        "tool_choice": "none"
+      }
+    },
+    {
+      "test": "migration_tool_choice_auto",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "public",
+          "tools": [
+            {
+              "name": "read"
+            }
+          ],
+          "tool_choice": {
+            "type": "auto"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "test": "migration_tool_choice_any",
+      "function": "anthropic_to_openai_body",
+      "args": [
+        {
+          "model": "public",
+          "tools": [
+            {
+              "name": "read"
+            }
+          ],
+          "tool_choice": {
+            "type": "any"
+          }
+        }
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      }
+    },
+    {
+      "test": "migration_response_cache_end_turn",
+      "function": "anthropic_to_openai_message",
+      "args": [
+        {
+          "id": "msg-1",
+          "model": "upstream",
+          "stop_reason": "end_turn",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "plan"
+            },
+            {
+              "type": "tool_use",
+              "id": "call-1",
+              "name": "read",
+              "input": {
+                "path": "中文.py",
+                "nested": [
+                  1,
+                  true
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "public"
+      },
+      "expected": {
+        "id": "msg-1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "reasoning_content": "plan",
+              "tool_calls": [
+                {
+                  "id": "call-1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\": \"中文.py\", \"nested\": [1, true]}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_response_cache_stop_sequence",
+      "function": "anthropic_to_openai_message",
+      "args": [
+        {
+          "id": "msg-1",
+          "model": "upstream",
+          "stop_reason": "stop_sequence",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "plan"
+            },
+            {
+              "type": "tool_use",
+              "id": "call-1",
+              "name": "read",
+              "input": {
+                "path": "中文.py",
+                "nested": [
+                  1,
+                  true
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "public"
+      },
+      "expected": {
+        "id": "msg-1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "reasoning_content": "plan",
+              "tool_calls": [
+                {
+                  "id": "call-1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\": \"中文.py\", \"nested\": [1, true]}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_response_cache_tool_use",
+      "function": "anthropic_to_openai_message",
+      "args": [
+        {
+          "id": "msg-1",
+          "model": "upstream",
+          "stop_reason": "tool_use",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "plan"
+            },
+            {
+              "type": "tool_use",
+              "id": "call-1",
+              "name": "read",
+              "input": {
+                "path": "中文.py",
+                "nested": [
+                  1,
+                  true
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "public"
+      },
+      "expected": {
+        "id": "msg-1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "reasoning_content": "plan",
+              "tool_calls": [
+                {
+                  "id": "call-1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\": \"中文.py\", \"nested\": [1, true]}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_response_cache_max_tokens",
+      "function": "anthropic_to_openai_message",
+      "args": [
+        {
+          "id": "msg-1",
+          "model": "upstream",
+          "stop_reason": "max_tokens",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "plan"
+            },
+            {
+              "type": "tool_use",
+              "id": "call-1",
+              "name": "read",
+              "input": {
+                "path": "中文.py",
+                "nested": [
+                  1,
+                  true
+                ]
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        }
+      ],
+      "kwargs": {
+        "client_model": "public"
+      },
+      "expected": {
+        "id": "msg-1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "reasoning_content": "plan",
+              "tool_calls": [
+                {
+                  "id": "call-1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\": \"中文.py\", \"nested\": [1, true]}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_openai",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\":\"a\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call1",
+              "content": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "read",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "openai",
+        "openai-chat"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\":\"a\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call1",
+            "content": "ok"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_openai",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "chat1",
+          "model": "upstream",
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": "你好",
+                "tool_calls": [
+                  {
+                    "id": "call1",
+                    "type": "function",
+                    "function": {
+                      "name": "read",
+                      "arguments": "{\"path\":\"a\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 12,
+            "completion_tokens": 4,
+            "prompt_tokens_details": {
+              "cached_tokens": 3
+            },
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "openai-chat",
+        "openai",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "chat1",
+        "model": "upstream",
+        "choices": [
+          {
+            "message": {
+              "role": "assistant",
+              "content": "你好",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\":\"a\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_anthropic",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\":\"a\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call1",
+              "content": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "read",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "openai",
+        "anthropic-messages"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call1",
+                "name": "read",
+                "input": {
+                  "path": "a"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call1",
+                "content": "ok"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096,
+        "tools": [
+          {
+            "name": "read",
+            "description": "",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_anthropic",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "msg1",
+          "model": "upstream",
+          "content": [
+            {
+              "type": "text",
+              "text": "你好"
+            },
+            {
+              "type": "tool_use",
+              "id": "call1",
+              "name": "read",
+              "input": {
+                "path": "a"
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "anthropic-messages",
+        "openai",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "你好",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\": \"a\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4,
+          "prompt_tokens_details": {
+            "cached_tokens": 3
+          },
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_responses",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\":\"a\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call1",
+              "content": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "read",
+                "parameters": {
+                  "type": "object"
+                }
+              }
+            }
+          ]
+        },
+        "openai",
+        "openai-responses"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\":\"a\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call1",
+            "output": "ok"
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "description": "",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_openai_to_responses",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "resp1",
+          "model": "upstream",
+          "status": "completed",
+          "output": [
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 4,
+            "input_tokens_details": {
+              "cached_tokens": 3,
+              "cache_write_tokens": 2
+            }
+          }
+        },
+        "openai-responses",
+        "openai",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp1",
+        "object": "chat.completion",
+        "model": "public",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "你好",
+              "tool_calls": [
+                {
+                  "id": "call1",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"path\":\"a\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 12,
+          "completion_tokens": 4
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_openai",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "call1",
+                  "name": "read",
+                  "input": {
+                    "path": "a"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "call1",
+                  "content": "ok"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "input_schema": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "anthropic",
+        "openai-chat"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\": \"a\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call1",
+            "content": "ok"
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_openai",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "chat1",
+          "model": "upstream",
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": "你好",
+                "tool_calls": [
+                  {
+                    "id": "call1",
+                    "type": "function",
+                    "function": {
+                      "name": "read",
+                      "arguments": "{\"path\":\"a\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 12,
+            "completion_tokens": 4,
+            "prompt_tokens_details": {
+              "cached_tokens": 3
+            },
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "openai-chat",
+        "anthropic",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "chat1",
+        "type": "message",
+        "role": "assistant",
+        "model": "public",
+        "content": [
+          {
+            "type": "text",
+            "text": "你好"
+          },
+          {
+            "type": "tool_use",
+            "id": "call1",
+            "name": "read",
+            "input": {
+              "path": "a"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 4
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_anthropic",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "call1",
+                  "name": "read",
+                  "input": {
+                    "path": "a"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "call1",
+                  "content": "ok"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "input_schema": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "anthropic",
+        "anthropic-messages"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call1",
+                "name": "read",
+                "input": {
+                  "path": "a"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call1",
+                "content": "ok"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "read",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_anthropic",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "msg1",
+          "model": "upstream",
+          "content": [
+            {
+              "type": "text",
+              "text": "你好"
+            },
+            {
+              "type": "tool_use",
+              "id": "call1",
+              "name": "read",
+              "input": {
+                "path": "a"
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "anthropic-messages",
+        "anthropic",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg1",
+        "model": "upstream",
+        "content": [
+          {
+            "type": "text",
+            "text": "你好"
+          },
+          {
+            "type": "tool_use",
+            "id": "call1",
+            "name": "read",
+            "input": {
+              "path": "a"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 7,
+          "output_tokens": 4,
+          "cache_read_input_tokens": 3,
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_responses",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "messages": [
+            {
+              "role": "user",
+              "content": "你好"
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "call1",
+                  "name": "read",
+                  "input": {
+                    "path": "a"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "call1",
+                  "content": "ok"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "name": "read",
+              "input_schema": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "anthropic",
+        "openai-responses"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\": \"a\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call1",
+            "output": "ok"
+          }
+        ],
+        "stream": false,
+        "max_output_tokens": 4096,
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "description": "",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_anthropic_to_responses",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "resp1",
+          "model": "upstream",
+          "status": "completed",
+          "output": [
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 4,
+            "input_tokens_details": {
+              "cached_tokens": 3,
+              "cache_write_tokens": 2
+            }
+          }
+        },
+        "openai-responses",
+        "anthropic",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp1",
+        "type": "message",
+        "role": "assistant",
+        "model": "public",
+        "content": [
+          {
+            "type": "text",
+            "text": "你好"
+          },
+          {
+            "type": "tool_use",
+            "id": "call1",
+            "name": "read",
+            "input": {
+              "path": "a"
+            }
+          }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 7,
+          "output_tokens": 4,
+          "cache_read_input_tokens": 3,
+          "cache_creation_input_tokens": 2
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_openai",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "input": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call1",
+              "output": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "responses",
+        "openai-chat"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": "你好"
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call1",
+                "type": "function",
+                "function": {
+                  "name": "read",
+                  "arguments": "{\"path\":\"a\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call1",
+            "content": "ok"
+          }
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "read",
+              "description": "",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_openai",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "chat1",
+          "model": "upstream",
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": "你好",
+                "tool_calls": [
+                  {
+                    "id": "call1",
+                    "type": "function",
+                    "function": {
+                      "name": "read",
+                      "arguments": "{\"path\":\"a\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": "tool_calls"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 12,
+            "completion_tokens": 4,
+            "prompt_tokens_details": {
+              "cached_tokens": 3
+            },
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "openai-chat",
+        "responses",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "chat1",
+        "object": "response",
+        "created_at": 1700000000,
+        "status": "completed",
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "public",
+        "output": [
+          {
+            "id": "msg_chat1_0",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "你好",
+                "annotations": []
+              }
+            ]
+          },
+          {
+            "id": "call1",
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\":\"a\"}"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 12,
+          "input_tokens_details": {
+            "cache_write_tokens": 2,
+            "cached_tokens": 0
+          },
+          "output_tokens": 4,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 16
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_anthropic",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "input": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call1",
+              "output": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "responses",
+        "anthropic-messages"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_use",
+                "id": "call1",
+                "name": "read",
+                "input": {
+                  "path": "a"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "call1",
+                "content": "ok"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 4096,
+        "tools": [
+          {
+            "name": "read",
+            "description": "",
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_anthropic",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "msg1",
+          "model": "upstream",
+          "content": [
+            {
+              "type": "text",
+              "text": "你好"
+            },
+            {
+              "type": "tool_use",
+              "id": "call1",
+              "name": "read",
+              "input": {
+                "path": "a"
+              }
+            }
+          ],
+          "stop_reason": "tool_use",
+          "usage": {
+            "input_tokens": 7,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 3,
+            "cache_creation_input_tokens": 2
+          }
+        },
+        "anthropic-messages",
+        "responses",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "msg1",
+        "object": "response",
+        "created_at": 1700000000,
+        "status": "completed",
+        "error": null,
+        "incomplete_details": null,
+        "instructions": null,
+        "model": "public",
+        "output": [
+          {
+            "id": "msg_coati",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "你好",
+                "annotations": []
+              }
+            ]
+          },
+          {
+            "id": "call1",
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\": \"a\"}"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+          "input_tokens": 12,
+          "input_tokens_details": {
+            "cache_write_tokens": 2,
+            "cached_tokens": 3
+          },
+          "output_tokens": 4,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 16
+        }
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_responses",
+      "function": "bridge_request_body",
+      "args": [
+        {
+          "model": "public",
+          "input": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call1",
+              "output": "ok"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "read",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "responses",
+        "openai-responses"
+      ],
+      "kwargs": {},
+      "expected": {
+        "model": "public",
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\":\"a\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call1",
+            "output": "ok"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "parameters": {
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "test": "migration_matrix_responses_to_responses",
+      "function": "bridge_response_body",
+      "args": [
+        {
+          "id": "resp1",
+          "model": "upstream",
+          "status": "completed",
+          "output": [
+            {
+              "type": "message",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "你好"
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call1",
+              "name": "read",
+              "arguments": "{\"path\":\"a\"}"
+            }
+          ],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 4,
+            "input_tokens_details": {
+              "cached_tokens": 3,
+              "cache_write_tokens": 2
+            }
+          }
+        },
+        "openai-responses",
+        "responses",
+        "public"
+      ],
+      "kwargs": {},
+      "expected": {
+        "id": "resp1",
+        "model": "upstream",
+        "status": "completed",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "你好"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "read",
+            "arguments": "{\"path\":\"a\"}"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 4,
+          "input_tokens_details": {
+            "cached_tokens": 3,
+            "cache_write_tokens": 2
+          }
+        }
+      }
+    }
+  ]
+}

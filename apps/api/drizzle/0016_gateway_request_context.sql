@@ -1,0 +1,1 @@
+ALTER TABLE "gw_requests" ADD COLUMN "request_context" jsonb;

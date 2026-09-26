@@ -1,4 +1,2 @@
-Coati
-Copyright 2026 Coati contributors
-
-Third-party dependencies retain their respective licenses and copyright notices.
+Coati Node.js foundation incorporates castor-kit (afe076c), MIT licensed.
+See THIRD_PARTY_LICENSES/castor-kit.txt. Coati additions are Apache-2.0.

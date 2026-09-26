@@ -1,0 +1,2 @@
+ALTER TABLE "gw_upstreams" ADD COLUMN "request_timeout_seconds" integer DEFAULT 120 NOT NULL;--> statement-breakpoint
+ALTER TABLE "gw_upstreams" ADD CONSTRAINT "gw_upstreams_timeout_check" CHECK ("gw_upstreams"."request_timeout_seconds" BETWEEN 5 AND 300);

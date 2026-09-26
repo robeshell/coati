@@ -1,0 +1,1 @@
+ALTER TABLE "gw_keys" ADD COLUMN "scopes" jsonb DEFAULT '["chat","profile"]'::jsonb NOT NULL;
