@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   createServer as httpServer,
   request as httpRequest,
@@ -11,15 +14,20 @@ import { getCACertificates, setDefaultCACertificates } from 'node:tls'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { GatewayTransport } from '../src/modules/gateway/transport'
 
-// Public fixture key: never use these localhost-only credentials outside tests.
-const cert = readFileSync(
-  new URL('./fixtures/proxy-tls/cert.pem', import.meta.url),
-  'utf8',
-)
-const key = readFileSync(
-  new URL('./fixtures/proxy-tls/key.pem', import.meta.url),
-  'utf8',
-)
+// Generate a disposable localhost identity; no private key belongs in the checkout.
+const fixtureDir = mkdtempSync(join(tmpdir(), 'coati-proxy-tls-'))
+let cert: string
+let key: string
+try {
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', join(fixtureDir, 'key.pem'), '-out', join(fixtureDir, 'cert.pem'),
+    '-days', '1', '-subj', '/CN=localhost',
+    '-addext', 'subjectAltName=DNS:localhost'], { stdio: 'ignore' })
+  cert = readFileSync(join(fixtureDir, 'cert.pem'), 'utf8')
+  key = readFileSync(join(fixtureDir, 'key.pem'), 'utf8')
+} finally {
+  rmSync(fixtureDir, { recursive: true, force: true })
+}
 const priorCAs = getCACertificates('default')
 const transport = new GatewayTransport(true)
 const wires: { method: string; url: string; auth?: string }[] = []

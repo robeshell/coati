@@ -67,13 +67,12 @@ Complete feature and behavioral parity with the Python open-source gateway befor
 
 ## Remaining delivery stages
 
-The authoritative remaining plan is [roadmap.md](roadmap.md): a bidirectional 3×3 protocol matrix, no LiteLLM or pi-ai, and Coati-owned protocol adapters validated against the Python reference. The list below is a high-level summary.
+The authoritative remaining plan is [roadmap.md](roadmap.md). Protocol conversion, cache accounting, account scheduling, authorization, server tools, console workflows and offline migration tooling have completed the scoped functional acceptance in [final-functional-acceptance.md](final-functional-acceptance.md). Explicit compatibility differences remain documented; candidate-route redesign is deferred.
 
-- Complete the remaining protocol capability cases, cache-detail persistence and SDK acceptance around the implemented JSON/SSE matrix.
-- Add account scheduling/cooldown, credential session affinity, provider model profiles, personal channels, server-side search/fetch, and existing client token-management compatibility.
-- Add per-user/shared budgets, not just per-key limits; verify revocation/permission changes across active sessions and replicas.
-- Build a read-only legacy export and idempotent import with dry-run counts, source IDs, credential re-encryption and rollback verification. Old tokens cannot currently be reused.
-- Benchmark the Python and Node versions under identical workloads/process limits; verify slow-client memory bounds, multi-replica behavior and real upstream integration before cutover.
+Two delivery stages remain:
+
+- Migrate and reconcile a real populated Python source into a separate Node database, including credentials, permissions, login/PAT behavior and historical usage. The local empty-business source rehearsal is not this acceptance.
+- Complete remote CI and release review, then prepare the versioned image and target deployment, cutover and rollback validation. Production capacity and supplier billing require that environment; no blanket supplier-compatibility claim is made.
 
 Do not merge this preview over the stable release on the strength of unit tests alone.
 
@@ -82,7 +81,7 @@ Do not merge this preview over the stable release on the strength of unit tests 
 - [Legacy endpoint inventory](legacy-inventory.md)
 - [Protocol contract and capability policy](protocol-contract.md)
 
-The matrix acceptance TODOs are explicit future obligations, not passing compatibility tests. Gateway routes now select upstreams independently of the incoming protocol and run the 3×3 JSON/SSE matrix. Basic text/tools, errors, cancellation and settlement withholding are tested; remaining capability and production gates stay open.
+Gateway routes select upstreams independently of the incoming protocol and run the 3×3 JSON/SSE matrix. Current acceptance and intentional rejection/lossy-conversion boundaries are tracked in [protocol-contract.md](protocol-contract.md) and [behavior-parity.md](behavior-parity.md); historical batch TODOs do not replace the current roadmap. Production deployment and real historical-data reconciliation remain separate gates.
 
 
 ### Reasoning conversion policy

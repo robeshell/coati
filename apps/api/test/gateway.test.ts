@@ -7695,7 +7695,9 @@ test('device confirmation permission is independent from PAT creation', async ()
   const role = (await handle.db.execute(sql`insert into roles(name,code) values('Device fixture','device-permission-fixture') returning id`)).rows[0]!
   try {
     await handle.db.execute(sql`insert into user_roles(user_id,role_id) values(${user.id},${role.id})`)
-    await handle.db.execute(sql`insert into menus(name,code,is_active,menu_type) values('Create key','gateway_keys_add',true,'button') on conflict(code) do nothing`)
+    for (const code of ['gateway_keys_add', 'gateway_device_confirm_action', 'gateway_my_usage_export', 'gateway_upstreams']) {
+      await handle.db.execute(sql`insert into menus(name,code,is_active,menu_type) values(${code},${code},true,'button') on conflict(code) do nothing`)
+    }
     const login = await app.inject({method:'POST',url:'/api/admin/login',payload:{username:'device-permission-fixture',password:'device-fixture-pass'}})
     const auth = {cookies:{coati_session:login.cookies.find(c=>c.name==='coati_session')!.value},headers:{'x-csrf-token':login.json().csrf_token}}
     const codes = (await app.inject({method:'POST',url:'/api/agent/auth/device/start'})).json()
