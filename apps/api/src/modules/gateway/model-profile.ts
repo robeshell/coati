@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { utcNowIso } from '@/common/serialize'
-import type {
+import {
   ModelProfileRepository,
-  ProfileRow,
+  type ProfileRow,
 } from './model-profile-repository'
 const tokens = z.coerce.number().int().min(1).max(1000000)
 const nullableTokens = z
@@ -120,4 +120,17 @@ export async function syncProfiles(repo: ModelProfileRepository, raw: unknown) {
     [...new Map(data.items.map((row) => [row.model_name, row])).values()],
     data.source,
   )
+}
+
+export class ModelProfileService {
+  private readonly repo: ModelProfileRepository
+  constructor(db: import('@/db/client').Db) { this.repo = new ModelProfileRepository(db) }
+  list(query: unknown) { return listProfiles(this.repo, query) }
+  save(body: unknown, id?: number) { return saveProfile(this.repo, body, id) }
+  sync(body: unknown) { return syncProfiles(this.repo, body) }
+  remove(id: number) { return this.repo.remove(id) }
+  async candidates(raw: unknown) {
+    const { search } = z.object({ search: z.string().default('') }).parse(raw)
+    return { items: (await this.repo.candidates()).filter(name => name.toLowerCase().includes(search.toLowerCase())).slice(0, 200) }
+  }
 }

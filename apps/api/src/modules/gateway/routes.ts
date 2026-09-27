@@ -1,45 +1,37 @@
-import { legacyCacheTest } from './cache-test-compat'
-import { executeWithServerTools } from './server-tool-loop'
-import { CacheTestRepository } from './cache-test-repository'
-import { WebSearchService } from './web-search'
-import { SearchSettingsService } from './search-settings'
-import { CacheTestService, cacheTestQuery } from './cache-test'
-import { ModelProfileRepository } from './model-profile-repository'
-import { listProfiles, saveProfile, syncProfiles } from './model-profile'
-import {
-  saveLegacyAccount,
-  checkLegacyAccount,
-  discoverLegacyAccounts,
-  probeLegacyAccounts,
-} from './legacy-account-write'
-import { legacyAccountRecord } from './legacy-account-list'
-import { listLegacyAccounts } from './legacy-account-list'
-import { accountSummary } from './account-metadata'
-import { providerCatalog, protocolCatalog } from './account-catalog'
-import {
-  savePersonalChannel,
-  listPersonalChannels,
-  discoverPersonalModels,
-} from './personal-channel'
-import { saveLegacyRoute, deleteLegacyRoute } from './legacy-route-write'
-import { listLegacyRoutes } from './legacy-route-list'
-import { listQuotas, updateQuota } from './quotas'
-import { listAdminUsage } from './usage-admin'
-import { personalUsageAnalytics, adminUsageAnalytics } from './usage-analytics'
-import { exportPersonalUsage } from './usage-export'
-import { sendTable } from '@/common/tabular'
-import { boundResponseLifetime } from './response-deadline'
-import { LegacyPatService, legacyPat } from './legacy-pat'
-import { Readable } from 'node:stream'
-import { z, ZodError } from 'zod'
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { registerGatewayLifecycle } from './runtime-http'
 import {
   getCurrentAdminUser,
   loginRequired,
   menuPermissionRequired,
 } from '@/common/auth'
-import { GatewayService, gatewayOptions } from './service'
+import { sendTable } from '@/common/tabular'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { ZodError, z } from 'zod'
+import { protocolCatalog, providerCatalog } from './account-catalog'
+import { accountSummary } from './account-metadata'
+import { GatewayAdminService } from './admin-service'
+import { CacheTestService } from './cache-test'
+import { legacyCacheTest } from './cache-test-compat'
+import { legacyAccountRecord } from './legacy-account-list'
+import {
+  checkLegacyAccount,
+  discoverLegacyAccounts,
+  probeLegacyAccounts,
+  saveLegacyAccount,
+} from './legacy-account-write'
+import { LegacyPatService, legacyPat } from './legacy-pat'
+import { ModelProfileService } from './model-profile'
+import {
+  discoverPersonalModels,
+  listPersonalChannels,
+  savePersonalChannel,
+} from './personal-channel'
+import { boundResponseLifetime } from './response-deadline'
 import { GatewayError } from './schema'
+import { SearchSettingsService } from './search-settings'
+import { executeWithServerTools } from './server-tool-loop'
+import { exportPersonalUsage } from './usage-export'
+import { WebSearchService } from './web-search'
 const idOf = (request: FastifyRequest) =>
   z.coerce
     .number()
@@ -47,12 +39,8 @@ const idOf = (request: FastifyRequest) =>
     .positive()
     .parse((request.params as { id: string }).id)
 export async function registerGatewayAdmin(app: FastifyInstance) {
-  const service = new GatewayService(
-    app.db,
-    gatewayOptions(app.config),
-    (error) => app.log.error({ err: error }, 'Gateway accounting failure'),
-  )
-  app.addHook('onClose', () => service.transport.close())
+  const service = app.gatewayRuntime.service
+  const admin = new GatewayAdminService(service)
   const searchSettings = new SearchSettingsService(service)
   for(const prefix of ['/api/admin/gateway/web-search','/api/admin/agent/web-search']) {
     app.get(prefix,{preHandler:menuPermissionRequired('gateway_websearch')},()=>searchSettings.view())
@@ -66,7 +54,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       finally{reply.raw.off('close',closed)}
     })
   }
-  const profiles = new ModelProfileRepository(app.db)
+  const profiles = new ModelProfileService(app.db)
   for (const prefix of [
     '/api/admin/gateway/model-profiles',
     '/api/admin/agent/model-profiles',
@@ -74,34 +62,23 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     app.get(
       prefix,
       { preHandler: menuPermissionRequired('gateway_model_profiles') },
-      async (request) => listProfiles(profiles, request.query),
+      async (request) => profiles.list(request.query),
     )
     app.get(
       prefix + '/candidates',
       { preHandler: menuPermissionRequired('gateway_model_profiles') },
-      async (request) => {
-        const query = z
-          .object({ search: z.string().default('') })
-          .parse(request.query)
-        return {
-          items: (await profiles.candidates())
-            .filter((name) =>
-              name.toLowerCase().includes(query.search.toLowerCase()),
-            )
-            .slice(0, 200),
-        }
-      },
+      async (request) => profiles.candidates(request.query),
     )
     app.post(
       prefix,
       { preHandler: menuPermissionRequired('gateway_model_profiles_add') },
       async (request, reply) =>
-        reply.code(201).send(await saveProfile(profiles, request.body)),
+        reply.code(201).send(await profiles.save(request.body)),
     )
     app.put(
       prefix + '/:id',
       { preHandler: menuPermissionRequired('gateway_model_profiles_edit') },
-      async (request) => saveProfile(profiles, request.body, idOf(request)),
+      async (request) => profiles.save(request.body, idOf(request)),
     )
     app.delete(
       prefix + '/:id',
@@ -111,7 +88,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     app.post(
       prefix + '/sync',
       { preHandler: menuPermissionRequired('gateway_model_profiles_edit') },
-      async (request) => syncProfiles(profiles, request.body),
+      async (request) => profiles.sync(request.body),
     )
   }
   const owner = async (request: FastifyRequest) =>
@@ -121,7 +98,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     const legacy = prefix.includes('/agent/')
     const view = { preHandler: menuPermissionRequired('gateway_cache_tests') }
     app.get(prefix, view, async request => {
-      const result=await cacheTests.repo.page(await owner(request),cacheTestQuery.parse(request.query),legacy)
+      const result=await cacheTests.page(await owner(request),request.query,legacy)
       return legacy?{...result,items:result.items.map(legacyCacheTest)}:result
     })
     app.get(prefix + '/keys', view, async request => ({items:await cacheTests.keys(await owner(request))}))
@@ -130,8 +107,8 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       const result = await cacheTests.models(await owner(request), query.key_id)
       return {models:result.data.map(row=>row.id),default_model:result.data[0]?.id ?? null}
     })
-    app.get(prefix + '/:id', view, async request => {const result=await cacheTests.repo.get(await owner(request),idOf(request));return legacy?legacyCacheTest(result):result})
-    app.delete(prefix + '/:id', {preHandler:menuPermissionRequired('gateway_cache_tests_delete')}, async request=>cacheTests.repo.remove(await owner(request), idOf(request)))
+    app.get(prefix + '/:id', view, async request => {const result=await cacheTests.get(await owner(request),idOf(request));return legacy?legacyCacheTest(result):result})
+    app.delete(prefix + '/:id', {preHandler:menuPermissionRequired('gateway_cache_tests_delete')}, async request=>cacheTests.remove(await owner(request), idOf(request)))
     app.post(prefix, {preHandler:menuPermissionRequired('gateway_cache_tests_run')}, async (request,reply)=>{
       const abort = new AbortController()
       const onClose=()=>{if(!reply.raw.writableFinished)abort.abort()}
@@ -146,13 +123,13 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   app.get(
     '/api/admin/agent/credentials',
     { preHandler: menuPermissionRequired('gateway_upstreams') },
-    async (request) => listLegacyAccounts(service.repo, request.query),
+    async (request) => admin.accounts(request.query),
   )
   app.get(
     '/api/admin/agent/my-channels',
     { preHandler: menuPermissionRequired('gateway_my_channels') },
     async (request) =>
-      listLegacyAccounts(service.repo, request.query, await owner(request)),
+      admin.accounts(request.query, await owner(request)),
   )
   for (const personal of [false, true]) {
     const path = personal
@@ -191,7 +168,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       path + '/:id',
       { preHandler: menuPermissionRequired(permission + '_delete') },
       async (request) =>
-        service.repo.deleteAccount(idOf(request), await actor(request)),
+        admin.deleteAccount(idOf(request), await actor(request)),
     )
     const probePermission = personal
       ? 'gateway_my_channels_test'
@@ -217,7 +194,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
         .code(201)
         .send(
           legacyAccountRecord(
-            await service.repo.copyPlatformAccount(idOf(request)),
+            await admin.copyAccount(idOf(request)),
           ),
         ),
   )
@@ -293,12 +270,12 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     '/api/admin/gateway/my-channels/:id',
     { preHandler: menuPermissionRequired('gateway_my_channels_delete') },
     async (request) =>
-      service.repo.deletePersonalChannel(await owner(request), idOf(request)),
+      admin.deletePersonalChannel(await owner(request), idOf(request)),
   )
   app.get(
     '/api/admin/agent/routes',
     { preHandler: menuPermissionRequired('gateway_routes') },
-    async (request) => listLegacyRoutes(service.repo, request.query),
+    async (request) => admin.legacyRoutes(request.query),
   )
   app.post(
     '/api/admin/agent/routes',
@@ -307,10 +284,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       reply
         .code(201)
         .send(
-          await saveLegacyRoute(
-            service.repo,
-            request.body,
-            gatewayOptions(app.config).allowPrivate,
+          await admin.saveLegacyRoute(request.body,
           ),
         ),
   )
@@ -318,17 +292,14 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     '/api/admin/agent/routes/:id',
     { preHandler: menuPermissionRequired('gateway_routes_edit') },
     async (request) =>
-      saveLegacyRoute(
-        service.repo,
-        request.body,
-        gatewayOptions(app.config).allowPrivate,
+      admin.saveLegacyRoute(request.body,
         idOf(request),
       ),
   )
   app.delete(
     '/api/admin/agent/routes/:id',
     { preHandler: menuPermissionRequired('gateway_routes_delete') },
-    async (request) => deleteLegacyRoute(service.repo, idOf(request)),
+    async (request) => admin.deleteLegacyRoute(idOf(request)),
   )
   app.get(
     '/api/admin/gateway/route-migration/preflight',
@@ -358,7 +329,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   app.get(
     '/api/admin/gateway/public-routes',
     { preHandler: menuPermissionRequired('gateway_routes') },
-    async () => ({ items: await service.repo.publicRoutes() }),
+    async () => ({ items: await admin.publicRoutes() }),
   )
   app.post(
     '/api/admin/gateway/public-routes',
@@ -374,24 +345,24 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   app.delete(
     '/api/admin/gateway/public-routes/:id',
     { preHandler: menuPermissionRequired('gateway_routes_delete') },
-    async (request) => service.repo.deletePublicRoute(idOf(request)),
+    async (request) => admin.deletePublicRoute(idOf(request)),
   )
   const pats = new LegacyPatService(service)
   app.get(
     '/api/admin/agent/usage',
     { preHandler: menuPermissionRequired('gateway_requests') },
-    async (request) => listAdminUsage(service.repo, request.query),
+    async (request) => admin.usage(request.query),
   )
   app.get(
     '/api/admin/agent/usage/analytics',
     { preHandler: menuPermissionRequired('gateway_requests') },
-    async (request) => adminUsageAnalytics(service.repo, request.query),
+    async (request) => admin.analytics(request.query),
   )
   app.get(
     '/api/agent/me/usage/analytics',
     { preHandler: loginRequired },
     async (request) =>
-      personalUsageAnalytics(service.repo, await owner(request), request.query),
+      admin.personalAnalytics(await owner(request), request.query),
   )
   app.post(
     '/api/agent/me/usage/export',
@@ -458,20 +429,19 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     '/api/agent/auth/pat/:id',
     { preHandler: menuPermissionRequired('gateway_keys_delete') },
     async (request) => {
-      const row = await service.repo.revoke(idOf(request), await owner(request))
-      if (!row) throw new GatewayError(404, '令牌不存在')
+      const row = await admin.revokeKey(idOf(request), await owner(request))
       return legacyPat(row)
     },
   )
   app.get(
     '/api/admin/agent/quotas',
     { preHandler: menuPermissionRequired('gateway_requests') },
-    (request) => listQuotas(service.repo, request.query),
+    (request) => admin.quotas(request.query),
   )
   app.put(
     '/api/admin/agent/quotas/:id',
     { preHandler: menuPermissionRequired('gateway_requests_quota_edit') },
-    (request) => updateQuota(service.repo, idOf(request), request.body),
+    (request) => admin.updateQuota(idOf(request), request.body),
   )
   app.get(
     '/api/admin/gateway/user-limits/:id',
@@ -495,7 +465,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       path,
       { preHandler: menuPermissionRequired(permission) },
       async () => {
-        if (resource === 'routes') return { items: await service.repo.routes() }
+        if (resource === 'routes') return { items: await admin.routes() }
         const items = await service.upstreams()
         return { items, summary: accountSummary(items) }
       },
@@ -524,9 +494,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       path + '/:id',
       { preHandler: menuPermissionRequired(permission + '_delete') },
       async (request) => {
-        const row = await service.repo.disable(resource, idOf(request))
-        if (!row) throw new GatewayError(404, '资源不存在')
-        return { success: true }
+        return admin.disable(resource, idOf(request))
       },
     )
   }
@@ -561,8 +529,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     '/api/admin/gateway/keys/:id',
     { preHandler: menuPermissionRequired('gateway_keys_delete') },
     async (request) => {
-      if (!(await service.repo.revoke(idOf(request), await owner(request))))
-        throw new GatewayError(404, '令牌不存在')
+      await admin.revokeKey(idOf(request), await owner(request))
       return { success: true }
     },
   )
@@ -570,45 +537,26 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     '/api/admin/gateway/requests',
     { preHandler: menuPermissionRequired('gateway_requests') },
     async (request) =>
-      service.repo.listRequests(
-        z.coerce
-          .number()
-          .int()
-          .min(1)
-          .max(100000)
-          .parse((request.query as { page?: string }).page || 1),
-      ),
+      admin.requests((request.query as { page?: string }).page),
   )
   app.get(
     '/api/admin/gateway/requests/:id',
     { preHandler: menuPermissionRequired('gateway_requests') },
     async (request) => {
-      const row = await service.repo.requestById(
-        z
-          .string()
-          .uuid()
-          .parse((request.params as { id: string }).id),
-      )
-      if (!row) throw new GatewayError(404, '请求不存在')
-      return row
+      return admin.request((request.params as { id: string }).id)
     },
   )
   app.get(
     '/api/admin/gateway/requests/:id/attempts',
     { preHandler: menuPermissionRequired('gateway_requests') },
     async (request) => ({
-      items: await service.repo.attempts(
-        z
-          .string()
-          .uuid()
-          .parse((request.params as { id: string }).id),
-      ),
+      items: await admin.attempts((request.params as { id: string }).id),
     }),
   )
   app.get(
     '/api/admin/gateway/overview',
     { preHandler: menuPermissionRequired('gateway_overview') },
-    () => service.repo.summary(),
+    () => admin.overview(),
   )
   for (const prefix of [
     '/api/admin/gateway/device',
@@ -637,22 +585,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   }
 }
 export async function registerGatewayApi(app: FastifyInstance) {
-  const service = new GatewayService(
-    app.db,
-    gatewayOptions(app.config),
-    (error) => app.log.error({ err: error }, 'Gateway accounting failure'),
-  )
-  app.addHook('onClose', () => service.transport.close())
-  const recover = setInterval(() => {
-    service.repo
-      .recoverExpired()
-      .then(() => new CacheTestRepository(app.db).recoverInterrupted())
-      .catch((error) =>
-        app.log.error({ err: error }, 'Reservation recovery failed'),
-      )
-  }, 30000)
-  recover.unref()
-  app.addHook('onClose', async () => clearInterval(recover))
+  const service = app.gatewayRuntime.service
   app.setErrorHandler((error, request, reply) => {
     const status =
       error instanceof GatewayError
@@ -674,6 +607,7 @@ export async function registerGatewayApi(app: FastifyInstance) {
           : status < 500
             ? '请求参数无效'
             : '网关内部错误'
+    if (error instanceof GatewayError && status === 503 && error.code.startsWith('gateway_')) reply.header('Retry-After', '1')
     if (status === 500)
       request.log.error({ err: error }, 'Gateway request failed')
     if (error instanceof GatewayError && error.upstreamBody !== undefined) {
@@ -710,17 +644,17 @@ export async function registerGatewayApi(app: FastifyInstance) {
   const authenticate = (request: FastifyRequest) =>
     service.authenticate(tokenOf(request))
   const webSearch = new WebSearchService(service)
+  registerGatewayLifecycle(app)
   for (const path of ['/v1/web-search', '/api/agent/v1/web-search']) {
     app.post(path, async (request, reply) => {
-      const key = await authenticate(request)
-      const abort = new AbortController()
-      const closed = () => { if (!reply.raw.writableFinished) abort.abort() }
-      reply.raw.on('close', closed)
-      boundResponseLifetime(reply.raw, 70000)
-      try {
-        const result = await webSearch.run(key, request.body, abort.signal, request.headers)
+      const lease = request.gatewayLease!
+      return lease.run(async () => {
+        const key = await authenticate(request)
+        lease.check()
+        const result = await webSearch.run(key, request.body, lease.signal, request.headers)
+        lease.check()
         return reply.header('X-Request-Id', result.id).header('X-Agent-Request-Id', result.id).send(result.json)
-      } finally { reply.raw.off('close', closed) }
+      })
     })
   }
   app.get('/api/agent/me', async (request, reply) => {
@@ -761,34 +695,22 @@ export async function registerGatewayApi(app: FastifyInstance) {
       if (prefix === '/api/agent/anthropic/v1' && protocol !== 'anthropic')
         continue
       app.post(prefix + suffix, async (request, reply) => {
-        const key = await authenticate(request),
-          abort = new AbortController()
-        boundResponseLifetime(reply.raw, service.options.timeoutMs)
-        reply.raw.on('close', () => {
-          if (!reply.raw.writableFinished) abort.abort()
+        const lease = request.gatewayLease!
+        return lease.run(async () => {
+          const key = await authenticate(request)
+          lease.check()
+          const result = await executeWithServerTools(service, key, request.body, protocol, lease.signal, request.headers)
+          reply.header('X-Request-Id', result.id).header('X-Agent-Request-Id', result.id)
+          if (result.stream) {
+            let output
+            try { output = lease.stream(result.stream) }
+            catch (error) { await result.stream.return(undefined); throw error }
+            return reply.header('Content-Type', 'text/event-stream; charset=utf-8')
+              .header('Cache-Control', 'no-store').header('X-Accel-Buffering', 'no').send(output)
+          }
+          lease.check()
+          return result.json
         })
-        const result = await executeWithServerTools(
-          service, key,
-          request.body,
-          protocol,
-          abort.signal,
-          request.headers,
-        )
-        reply
-          .header('X-Request-Id', result.id)
-          .header('X-Agent-Request-Id', result.id)
-        if (result.stream)
-          return reply
-            .header('Content-Type', 'text/event-stream; charset=utf-8')
-            .header('Cache-Control', 'no-store')
-            .header('X-Accel-Buffering', 'no')
-            .send(
-              Readable.from(result.stream, {
-                objectMode: false,
-                highWaterMark: 65536,
-              }),
-            )
-        return result.json
       })
     }
   }

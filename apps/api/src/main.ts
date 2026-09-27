@@ -22,12 +22,14 @@ const app = await buildApp({
 // Scheduled tasks: with RUN_SCHEDULER_IN_WEB=true the scheduler loop runs inside the web process (otherwise use the standalone worker: node dist/worker.js)
 let schedulerRunner: ScheduledTaskRunner | null = null
 
-const shutdown = async (signal: string) => {
+let shutdownPromise: Promise<void> | undefined
+const shutdown = (signal: string) => shutdownPromise ??= (async () => {
   app.log.info(`收到 ${signal}，正在关闭`)
+  app.gatewayRuntime.beginDrain()
   await schedulerRunner?.stop()
   await app.close()
   process.exit(0)
-}
+})()
 process.on('SIGINT', () => void shutdown('SIGINT'))
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 

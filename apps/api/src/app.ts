@@ -30,6 +30,8 @@ import type { AppConfig } from './config'
 import { createDb, type DbHandle } from './db/client'
 import { registerRoutes } from './router'
 import { registerGatewayApi } from './modules/gateway/routes'
+import { GatewayRuntime } from './modules/gateway/runtime'
+import { gatewayOptions } from './modules/gateway/service'
 
 export const SESSION_COOKIE_NAME = 'coati_session'
 const STATIC_EXTENSIONS = [
@@ -76,7 +78,15 @@ export async function buildApp({
   const handle = dbHandle ?? createDb(config.databaseUrl)
   app.decorate('config', config)
   app.decorate('db', handle.db)
-  if (!dbHandle) app.addHook('onClose', async () => handle.pool.end())
+  const gatewayRuntime = new GatewayRuntime(handle.db, gatewayOptions(config),
+    (error) => app.log.error({ err: error }, 'Gateway runtime failure'))
+  app.decorate('gatewayRuntime', gatewayRuntime)
+  app.addHook('onReady', async () => gatewayRuntime.start())
+  app.addHook('preClose', async () => gatewayRuntime.beginDrain())
+  app.addHook('onClose', async () => {
+    try { await gatewayRuntime.close() }
+    finally { if (!dbHandle) await handle.pool.end() }
+  })
   await app.register(registerGatewayApi)
   await app.register(async (app) => {
     app.decorateRequest('currentAdminUser', undefined)
@@ -167,6 +177,7 @@ export async function buildApp({
     app.get('/api/admin/app-info', async () => ({ demo_mode: false }))
 
     app.get('/health', async (request, reply) => {
+      if (!gatewayRuntime.accepting) return reply.code(503).send({ status: 'draining' })
       try {
         await handle.pool.query('SELECT 1')
         return {

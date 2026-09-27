@@ -4,7 +4,6 @@ import {
   sanitizeFormula,
   type TablePayload,
 } from '@/common/tabular'
-import { utils, write } from 'xlsx'
 import { LegacyPatService } from './legacy-pat'
 
 const fields = {
@@ -106,6 +105,7 @@ export async function exportPersonalUsage(
       'my_usage_export',
       type === 'csv' ? 'csv' : 'xlsx',
     )
+  const { utils, write } = await import('xlsx')
   const workbook = utils.book_new()
   utils.book_append_sheet(
     workbook,

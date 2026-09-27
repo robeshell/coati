@@ -8,6 +8,12 @@ Coati is a self-hosted enterprise model gateway. This branch rebuilds its consol
 
 The foundation was imported from `robeshell/castor-kit` at `afe076c7835c8f7e2c330c0d6574fb92d8229d92`. Its MIT license is retained in `THIRD_PARTY_LICENSES/castor-kit.txt`; Coati remains Apache-2.0. No desktop, CLI, agent plugin, or runtime installer is included.
 
+## Architecture and implementation map
+
+See [the current gateway architecture](architecture.md) for module ownership, request sequencing, state/transaction boundaries, protocol contracts and source/test indexes. The document also records retained design limits so implementation status is not inferred from a feature checklist.
+
+The separate [Node.js target architecture](node-target-architecture.md) defines runtime ownership, bounded concurrency/streaming, connection reuse, database accounting and protocol evolution. Its [gap and implementation plan](node-architecture-gap-plan.md) distinguishes current capabilities from proposed changes and performance evidence. Runtime changes remain planned; the first independent-process [memory baseline](memory-baseline.md) has been measured with local fixtures.
+
 ## Run locally
 
 Use Node 22.19+ and pnpm 11. PostgreSQL needs separate development and test databases.
@@ -59,7 +65,7 @@ pnpm build
 BENCH_DATABASE_URL=postgresql://localhost/postgres pnpm bench:gateway
 ```
 
-The benchmark creates and drops only its own `coati_bench_<timestamp>` database; it uses a local fake upstream and never calls a model provider. See [validation](validation.md), [contracts](contracts.md), and [architecture](architecture.md).
+The benchmark creates and drops only its own `coati_bench_<timestamp>_<random>` database; it uses a local fake upstream and never calls a model provider. See [validation](validation.md), [contracts](contracts.md), and [architecture](architecture.md).
 
 ## Migration priority
 

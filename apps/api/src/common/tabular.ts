@@ -7,7 +7,7 @@
  * - Import file limit is 5MB
  */
 
-import ExcelJS from 'exceljs'
+import type ExcelJS from 'exceljs'
 import { parse as parseCsv } from 'csv-parse/sync'
 import type { FastifyReply } from 'fastify'
 
@@ -129,6 +129,7 @@ function xlsxCellRaw(value: ExcelJS.CellValue): unknown {
 }
 
 async function readXlsx(content: Buffer): Promise<TableReadResult> {
+  const { default: ExcelJS } = await import('exceljs')
   const workbook = new ExcelJS.Workbook()
   try {
     await workbook.xlsx.load(content as unknown as ArrayBuffer)
@@ -212,6 +213,7 @@ export async function buildTable(
     const text = [safeHeaders, ...safeRows].map(csvRow).join('')
     payload = Buffer.from(`﻿${text}`, 'utf8')
   } else {
+    const { default: ExcelJS } = await import('exceljs')
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('Sheet')
     // Empty-string cells get no <c> element: exceljs would write '' as an empty-string cell, so convert to null here

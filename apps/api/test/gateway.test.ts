@@ -2698,7 +2698,7 @@ test('ordinary model ignores vision override and route API persists and clears i
 })
 
 for (const reason of ['idle', 'deadline', 'client'] as const) {
-  test(`paused stream ${reason} releases admission before the consumer resumes`, async () => {
+  test(`paused stream ${reason} settles with the correct timeout boundary`, async () => {
     const k = await setup()
     behavior = 'slow'
     const short = new GatewayService(handle.db, {
@@ -2728,7 +2728,16 @@ for (const reason of ['idle', 'deadline', 'client'] as const) {
       iterator = result.stream!
       expect((await iterator.next()).done).toBe(false)
       // No next()/return() while waiting: the consumer is suspended on a yield.
+      let remaining = ''
+      let reading: Promise<void> | undefined
       if (reason === 'client') controller.abort()
+      if (reason === 'idle') {
+        // Downstream backpressure is not upstream idleness. Start a read before checking idle.
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        expect((await short.repo.listRequests()).items[0]?.status).toBe('reserved')
+        const active = iterator
+        reading = (async () => { for await (const chunk of active) remaining += chunk })()
+      }
       await expect
         .poll(async () => (await short.repo.listRequests()).items[0]?.status, {
           timeout: 1000,
@@ -2741,8 +2750,8 @@ for (const reason of ['idle', 'deadline', 'client'] as const) {
           )
         ).rows[0]?.n,
       ).toBe(0)
-      let remaining = ''
-      for await (const chunk of iterator) remaining += chunk
+      if (reading) await reading
+      else for await (const chunk of iterator) remaining += chunk
       expect(remaining).not.toContain('[DONE]')
       if (reason !== 'client') expect(remaining).toContain('stream_error')
       expect(persist).toHaveBeenCalledTimes(1)
@@ -7726,4 +7735,65 @@ test('device confirmation permission is independent from PAT creation', async ()
     await handle.db.execute(sql`delete from admin_users where id=${user.id}`)
     await handle.db.execute(sql`delete from roles where id=${role.id}`)
   }
+})
+
+
+test('unconsumed upstream stream cancellation settles its reservation', async () => {
+  const key = await setup()
+  behavior = 'slow'
+  const controller = new AbortController()
+  const gateway = app.gatewayRuntime.service
+  const result = await gateway.execute(await gateway.authenticate(key.token), { model: 'public-model', stream: true }, 'openai', controller.signal)
+  controller.abort()
+  await result.stream!.return(undefined)
+  expect((await gateway.repo.listRequests()).items[0]?.status).toBe('client_error')
+  expect((await handle.db.execute(sql`SELECT count(*)::int AS n FROM gw_upstream_leases`)).rows[0]?.n).toBe(0)
+})
+
+test('HTTP admission rejects overload and body budget exhaustion before authentication', async () => {
+  const runtime = app.gatewayRuntime
+  const prior = { ...runtime.limits }
+  const auth = vi.spyOn(runtime.service, 'authenticate')
+  const lease = runtime.admit()
+  try {
+    runtime.limits.maxActive = 1
+    const rejected = await app.inject({ method: 'POST', url: '/v1/messages', payload: { model: 'fixture' } })
+    expect(rejected.statusCode).toBe(503)
+    expect(rejected.headers['retry-after']).toBe('1')
+    expect(rejected.json().error.code).toBe('gateway_capacity')
+    expect(auth).not.toHaveBeenCalled()
+    lease.endResponse(false); await lease.done
+    runtime.limits.maxBufferedBytes = 8
+    const oversized = await app.inject({ method: 'POST', url: '/v1/responses', payload: { model: 'fixture' } })
+    expect(oversized.statusCode).toBe(503)
+    expect(oversized.json().error.code).toBe('gateway_buffer_capacity')
+    expect(auth).not.toHaveBeenCalled()
+    await expect.poll(() => runtime.snapshot().activeRequests).toBe(0)
+    expect(runtime.snapshot().bufferedBytes).toBe(0)
+  } finally { lease.endResponse(true); Object.assign(runtime.limits, prior); auth.mockRestore() }
+})
+
+test('HTTP shutdown drains a live stream, cancels it, and settles before transport close', async () => {
+  const key = await setup()
+  behavior = 'slow'
+  const isolated = await buildTestApp()
+  isolated.gatewayRuntime.limits.drainMs = 10
+  await isolated.listen({ host: '127.0.0.1', port: 0 })
+  const address = isolated.server.address() as { port: number }
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/completions`, {
+      method: 'POST', headers: { authorization: `Bearer ${key.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'public-model', stream: true }),
+    })
+    expect(response.status).toBe(200)
+    const reader = response.body!.getReader()
+    expect((await reader.read()).done).toBe(false)
+    expect(isolated.gatewayRuntime.snapshot().activeRequests).toBe(1)
+    const consuming = (async () => { try { while (!(await reader.read()).done) { /* drain */ } } catch { /* server closes the interrupted SSE */ } })()
+    await isolated.close()
+    await consuming
+    expect(isolated.gatewayRuntime.snapshot()).toEqual({ activeRequests: 0, bufferedBytes: 0, accepting: false })
+    expect((await app.gatewayRuntime.service.repo.listRequests()).items[0]?.status).toBe('stream_error')
+    expect((await handle.db.execute(sql`SELECT count(*)::int AS n FROM gw_upstream_leases`)).rows[0]?.n).toBe(0)
+  } finally { isolated.server.closeAllConnections(); await isolated.close() }
 })

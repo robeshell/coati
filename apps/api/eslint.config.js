@@ -26,4 +26,17 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['src/modules/gateway/routes.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{ group: ['*repository*', '@/db/*', 'drizzle-orm'], message: '网关 HTTP 入口通过服务层访问存储，不直接导入 repository 或数据库。' }],
+      }],
+      'no-restricted-syntax': ['error',
+        { selector: "CallExpression[callee.property.name='toISOString']", message: '时间输出使用 common/serialize。' },
+        { selector: "MemberExpression[property.name='repo']", message: '网关 HTTP 入口不能绕过服务层访问 repo。' },
+        { selector: "VariableDeclarator[id.type='ObjectPattern'] > ObjectPattern > Property[key.name='repo']", message: '网关 HTTP 入口不能解构 repository。' },
+      ],
+    },
+  },
 )
