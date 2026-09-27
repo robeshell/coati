@@ -27,7 +27,7 @@ export function registerGatewayLifecycle(app: FastifyInstance) {
     reply.raw.once('finish', () => lease.endResponse(false))
     request.raw.once('aborted', () => lease.endResponse(true))
   })
-  app.addHook('preParsing', async (request, _reply, payload) => {
+  app.addHook('preParsing', async (request, reply, payload) => {
     const lease = request.gatewayLease
     if (!lease) return payload
     const meter = new Transform({
@@ -40,6 +40,10 @@ export function registerGatewayLifecycle(app: FastifyInstance) {
       },
     }) as Transform & { receivedEncodedLength: number }
     meter.receivedEncodedLength = 0
+    // Fastify can reject Content-Length before attaching its parser listeners.
+    // Keep an error owner and stop metering when that early response closes.
+    meter.on('error', () => payload.unpipe(meter))
+    reply.raw.once('close', () => { payload.unpipe(meter); meter.destroy() })
     payload.on('error', (error) => meter.destroy(error))
     return payload.pipe(meter)
   })

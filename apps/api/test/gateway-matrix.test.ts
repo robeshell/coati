@@ -2739,7 +2739,7 @@ for (const protocol of ['openai', 'anthropic'] as const)
 
 for (const { inbound, upstream: protocol } of matrix)
   for (const reason of ['idle', 'deadline', 'client'] as const) {
-    test(`${inbound} -> ${protocol}: paused consumer ${reason} settles without another pull`, async () => {
+    test(`${inbound} -> ${protocol}: paused consumer ${reason} respects the upstream-read timeout boundary`, async () => {
       const token = await configure(protocol)
       mode = 'endless'
       const service = new GatewayService(db.db, {
@@ -2770,6 +2770,11 @@ for (const { inbound, upstream: protocol } of matrix)
         iterator = result.stream!
         expect((await iterator.next()).done).toBe(false)
         if (reason === 'client') controller.abort()
+        if (reason === 'idle') {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          expect((await db.db.execute(sql`SELECT status FROM gw_requests`)).rows[0]?.status).toBe('reserved')
+          controller.abort()
+        }
         await expect
           .poll(
             async () =>
@@ -2777,7 +2782,7 @@ for (const { inbound, upstream: protocol } of matrix)
                 ?.status,
             { timeout: 2000 },
           )
-          .toBe(reason === 'client' ? 'client_error' : 'stream_error')
+          .toBe(reason === 'deadline' ? 'stream_error' : 'client_error')
         expect(
           (
             await db.db.execute(
@@ -2791,7 +2796,7 @@ for (const { inbound, upstream: protocol } of matrix)
         expect(remaining).not.toMatch(
           /\[DONE\]|message_stop|response.completed/,
         )
-        if (reason !== 'client') expect(remaining).toContain('stream_error')
+        if (reason === 'deadline') expect(remaining).toContain('stream_error')
         expect(persist).toHaveBeenCalledTimes(1)
         expect(upstreamCalls).toBe(1)
       } finally {
