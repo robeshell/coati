@@ -1,0 +1,103 @@
+// Ported catalog contract; see the source-hashed Python reference fixture.
+const providers = [
+  {
+    code: 'deepseek',
+    label: 'DeepSeek',
+    protocol: 'openai-compatible',
+    available: true,
+    description: '使用 DeepSeek OpenAI 兼容协议',
+    default_base_url: 'https://api.deepseek.com',
+    default_model: '',
+    default_models: [],
+    status: 'available',
+  },
+  {
+    code: 'openai',
+    label: 'OpenAI',
+    protocol: 'openai-compatible',
+    available: true,
+    description: '使用 OpenAI Chat Completions 协议',
+    default_base_url: 'https://api.openai.com/v1',
+    default_model: '',
+    default_models: [],
+    status: 'available',
+  },
+  {
+    code: 'openai-compatible',
+    label: 'OpenAI 兼容服务',
+    protocol: 'openai-compatible',
+    available: true,
+    description: '适用于实现 /models 与 /chat/completions 的兼容服务',
+    default_base_url: '',
+    default_model: '',
+    default_models: [],
+    status: 'available',
+  },
+  {
+    code: 'anthropic',
+    label: 'Anthropic',
+    protocol: 'anthropic-messages',
+    available: true,
+    description: 'Anthropic Messages 原生接口画像',
+    default_base_url: 'https://api.anthropic.com',
+    default_model: '',
+    default_models: [],
+    status: 'available',
+  },
+  {
+    code: 'gemini',
+    label: 'Google Gemini',
+    protocol: 'google-generative-language',
+    available: false,
+    description: '预留 generateContent/streamGenerateContent 协议转换接口',
+    default_base_url: '',
+    default_model: '',
+    default_models: [],
+    status: 'reserved',
+  },
+]
+const protocols = [
+  {
+    code: 'openai-chat',
+    label: 'OpenAI Chat Completions',
+    description:
+      '适用于提供 /chat/completions 的上游；其他入口协议由网关转换后调用。',
+    endpoint_suffix: '/chat/completions',
+    model_discovery: true,
+    accepted_inbound: ['openai', 'anthropic', 'responses'],
+  },
+  {
+    code: 'anthropic-messages',
+    label: 'Anthropic Messages',
+    description:
+      '适用于提供 /v1/messages 的上游，例如 DashScope Anthropic 兼容入口；其他入口协议由网关转换。',
+    endpoint_suffix: '/v1/messages',
+    model_discovery: true,
+    model_discovery_verifies_health: false,
+    accepted_inbound: ['openai', 'anthropic', 'responses'],
+  },
+  {
+    code: 'openai-responses',
+    label: 'OpenAI Responses',
+    description: '适用于提供 /responses 的上游；其他入口协议由网关转换。',
+    endpoint_suffix: '/responses',
+    model_discovery: true,
+    accepted_inbound: ['openai', 'anthropic', 'responses'],
+  },
+]
+
+const nativeProtocols: Record<string, string> = {
+  'openai-chat': 'openai',
+  'anthropic-messages': 'anthropic',
+  'openai-responses': 'responses',
+}
+export function providerCatalog() {
+  return { items: structuredClone(providers) }
+}
+export function protocolCatalog(native = false) {
+  return {
+    items: structuredClone(protocols).map((item) =>
+      native ? { ...item, gateway_protocol: nativeProtocols[item.code] } : item,
+    ),
+  }
+}

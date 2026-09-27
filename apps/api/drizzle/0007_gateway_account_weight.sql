@@ -1,0 +1,1 @@
+ALTER TABLE "gw_upstreams" ADD COLUMN "weight" integer DEFAULT 1 NOT NULL;

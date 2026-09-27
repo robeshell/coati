@@ -69,3 +69,34 @@ instance/
 # Client implementations are maintained outside this repository.
 /cli/
 /plugins/
+
+# Node rewrite
+# deps / build
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# runtime
+instance/
+# Ignore only runtime log dirs; a bare logs/ would also match source dirs such as src/modules/admin/logs
+/logs/
+/apps/*/logs/
+*.log
+
+# tooling
+.DS_Store
+.vscode/
+.idea/
+coverage/
+.vitest/
+.vite/
+
+# Docs site build output
+website/.vitepress/cache/
+website/.vitepress/dist/

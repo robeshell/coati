@@ -1,0 +1,144 @@
+/**
+ * Auth module service layer
+ *
+ * Session reads/writes belong to the HTTP layer and are handled by routes; this layer only returns results or throws ServiceError.
+ */
+
+import { loadAdminWithRoles, sessionCredentialVersion } from '@/common/auth'
+import { ServiceError } from '@/common/errors'
+import { checkPasswordHash, generatePasswordHash } from '@/common/password'
+import type { AppConfig } from '@/config'
+import type { Db } from '@/db/client'
+import { adminUserToDict } from '@/db/schema'
+import { AuthRepository } from './repository'
+import { validateChangePasswordPayload, type ChangePasswordPayload } from './schema'
+
+export interface ClientMeta {
+  ip: string
+  userAgent: string
+}
+
+export class AuthService {
+  private readonly repo: AuthRepository
+
+  constructor(
+    private readonly db: Db,
+    private readonly config: Pick<AppConfig, 'loginMaxFailures' | 'loginLockoutMinutes'> & Partial<Pick<AppConfig, 'demoMode'>>,
+    private readonly log: { warn: (obj: unknown, msg: string) => void } = console,
+  ) {
+    this.repo = new AuthRepository(db)
+  }
+
+  /**
+   * Recent-window failure count from login_logs; lock out once over the threshold. Two dimensions (either one blocks):
+   * - IP: guards against distributed credential stuffing across many usernames
+   * - Username: guards against one account being tried from rotating IPs
+   * In DEMO_MODE the username dimension is skipped: the demo credentials are public, so anyone could otherwise lock
+   * the shared account for everyone by typing a wrong password on purpose.
+   */
+  private async isLoginBlocked(username: string, ip: string): Promise<boolean> {
+    const { loginMaxFailures: max, loginLockoutMinutes: minutes } = this.config
+    if (ip && (await this.repo.countRecentFailures({ ip }, minutes)) >= max) return true
+    if (username && !this.config.demoMode && (await this.repo.countRecentFailures({ username }, minutes)) >= max) return true
+    return false
+  }
+
+  /** Audit write failures don't affect the main flow (log a warning and swallow the error) */
+  private async bestEffort(what: string, fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn()
+    } catch (err) {
+      this.log.warn({ err }, `${what}失败`)
+    }
+  }
+
+  /** Returns `{ message, user }` on success; the caller writes the session and attaches csrf_token */
+  async login(usernameRaw: unknown, password: unknown, meta: ClientMeta) {
+    const username = typeof usernameRaw === 'string' ? usernameRaw : ''
+    if (await this.isLoginBlocked(username, meta.ip)) {
+      throw new ServiceError('登录失败次数过多，请稍后再试', 429)
+    }
+
+    const user = username ? await this.repo.getAdminByUsername(username) : null
+
+    if (user && (await checkPasswordHash(user.password_hash, password))) {
+      await this.bestEffort('记录登录日志', async () => {
+        await this.repo.addLoginLog({
+          username,
+          user_id: user.id,
+          status: 'success',
+          ip: meta.ip,
+          user_agent: meta.userAgent,
+          message: '登录成功',
+        })
+        // Login succeeded: reset the window's failure count so earlier mistakes don't keep rate limiting
+        await this.repo.clearRecentFailures(username, meta.ip, this.config.loginLockoutMinutes)
+      })
+
+      const withRoles = await loadAdminWithRoles(this.db, username)
+      if (!withRoles || withRoles.id !== user.id || withRoles.password_hash !== user.password_hash) throw new ServiceError('登录已失效，请重新登录', 401)
+      return { username, userId:user.id, credentialVersion:sessionCredentialVersion(user.password_hash), payload: { message: '登录成功', user: adminUserToDict(withRoles) } }
+    }
+
+    await this.bestEffort('记录登录日志', () =>
+      this.repo.addLoginLog({
+        username,
+        user_id: user?.id ?? null,
+        status: 'failed',
+        ip: meta.ip,
+        user_agent: meta.userAgent,
+        message: '用户名或密码错误',
+      }),
+    )
+    throw new ServiceError('用户名或密码错误', 401)
+  }
+
+  /** Record the logout operation log; the caller clears the session */
+  async logout(username: string, meta: ClientMeta) {
+    const user = username ? await this.repo.getAdminByUsername(username) : null
+    await this.bestEffort('记录登出日志', () =>
+      this.repo.addOperationLog({
+        username: username || 'unknown',
+        user_id: user?.id ?? null,
+        module: 'auth',
+        action: 'logout',
+        method: 'POST',
+        path: '/api/admin/logout',
+        target_id: null,
+        payload: null,
+        ip: meta.ip,
+        user_agent: meta.userAgent,
+        status_code: 200,
+      }),
+    )
+    return { message: '已退出登录' }
+  }
+
+  async changePassword(username: string | undefined, data: ChangePasswordPayload, expectedUserId?: number) {
+    const error = validateChangePasswordPayload(data)
+    if (error) throw new ServiceError(error, 400)
+
+    const admin = username ? await this.repo.getAdminByUsername(username) : null
+    if (!admin || (expectedUserId !== undefined && admin.id !== expectedUserId)) throw new ServiceError('未登录', 401)
+    if (!(await checkPasswordHash(admin.password_hash, data?.old_password))) {
+      throw new ServiceError('旧密码错误', 400)
+    }
+
+    const passwordHash = await generatePasswordHash(String(data?.new_password))
+    try {
+      // New hashes keep the existing `pbkdf2:sha256:<iterations>$<salt>$<hex>` format, compatible with hashes already stored
+      if (!(await this.repo.updatePasswordHash(admin.id, passwordHash, admin.password_hash))) throw new ServiceError('登录已失效，请重新登录', 401)
+    } catch (err) {
+      if(err instanceof ServiceError) throw err
+      throw new ServiceError(err instanceof Error ? err.message : String(err), 500)
+    }
+    return { message: '密码修改成功', credentialVersion: sessionCredentialVersion(passwordHash) }
+  }
+
+  async getCurrentUser(username: string | undefined) {
+    if (!username) throw new ServiceError('未登录', 401)
+    const user = await loadAdminWithRoles(this.db, username)
+    if (!user) throw new ServiceError('登录已失效，请重新登录', 401)
+    return { user: adminUserToDict(user) }
+  }
+}

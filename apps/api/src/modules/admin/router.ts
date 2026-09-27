@@ -1,0 +1,29 @@
+/**
+ * admin domain router assembly
+ */
+
+import type { FastifyInstance } from 'fastify'
+import { registerAnnouncementRoutes } from './announcement/routes'
+import { registerAuthRoutes } from './auth/routes'
+import { registerDashboardRoutes } from './dashboard/routes'
+import { registerDictRoutes } from './dicts/routes'
+import { registerLogsRoutes } from './logs/routes'
+import { registerMenuRoutes } from './menu/routes'
+import { registerNotificationRoutes } from './notification/routes'
+import { registerRoleRoutes } from './roles/routes'
+import { registerScheduledTaskRoutes } from './scheduled-task/routes'
+import { registerUserRoutes } from './users/routes'
+
+export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
+  // Register logs first: it installs the global onResponse audit hook
+  await registerLogsRoutes(app)
+  await registerAuthRoutes(app)
+  await registerUserRoutes(app)
+  await registerRoleRoutes(app)
+  await registerMenuRoutes(app)
+  await registerDictRoutes(app)
+  await registerScheduledTaskRoutes(app)
+  await registerDashboardRoutes(app)
+  await registerNotificationRoutes(app)
+  await registerAnnouncementRoutes(app)
+}

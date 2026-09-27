@@ -1,18 +1,9 @@
 # Coati contributor instructions
 
-Coati is a self-hosted enterprise model gateway and administration console.
-portal/ contains Flask, React and PostgreSQL integration; docker/ contains
-server deployment definitions.
+Coati is a self-hosted enterprise model gateway. The Node rewrite lives in apps/api and apps/web. portal/ is the unchanged Python reference until migration acceptance.
 
-Desktop applications, CLI implementations, agent plugins and runtime installers
-are outside the public repository. Minimal API integration examples under
-examples/ are permitted; they must not depend on those client implementations. Do not add them as dependencies or vendor them.
-Keep company-specific services, credentials, domains and deployment records out.
+Use TypeScript + Fastify + Drizzle + PostgreSQL; React + shadcn/ui + Tailwind for the new console. Backend layers: db/schema → schema → repository → service → routes. Import permission checks from common/auth. Frontend API calls use shared/api/request. Keep gateway API hooks isolated from admin cookie/CSRF/i18n/audit hooks.
 
-Backend layers: model → schema → crud → service → api. Reuse backend/common/auth.py
-for access checks. Frontend uses Semi Design and shared/api/request.js.
-Preserve migration revision chains and apply new migrations to an isolated
-development database before claiming they are validated.
+Desktop clients, CLI implementations, agent plugins, runtime installers and company-specific services remain outside scope. Minimal protocol/device-auth examples are allowed. Preserve upstream MIT notice; project license remains Apache-2.0.
 
-Run portal backend tests, frontend tests/build and
-portal/backend/scripts/verify_feature.py for affected changes.
+No live model calls or production writes during tests. Use isolated coati_node_dev/coati_node_test databases. Never apply Node migrations directly to the Python database. Validate migrations on a new database; run pnpm typecheck, pnpm test, pnpm build and pnpm verify:gateway. Preserve stream cancellation, bounded buffering, honest usage and atomic quota semantics. See docs/node-rewrite/ for contract and validation status.

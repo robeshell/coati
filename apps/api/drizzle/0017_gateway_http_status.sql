@@ -1,0 +1,1 @@
+ALTER TABLE "gw_requests" ADD COLUMN "http_status" integer;

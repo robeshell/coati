@@ -1,0 +1,1 @@
+ALTER TABLE "gw_upstreams" ADD COLUMN "provider" text DEFAULT 'openai-compatible' NOT NULL;

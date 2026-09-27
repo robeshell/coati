@@ -1,0 +1,28 @@
+{
+  "name": "coati",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @coati/api --filter @coati/web dev",
+    "dev:api": "pnpm --filter @coati/api dev",
+    "dev:web": "pnpm --filter @coati/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "db:generate": "pnpm --filter @coati/api db:generate",
+    "db:migrate": "pnpm --filter @coati/api db:migrate",
+    "seed:rbac": "pnpm --filter @coati/api seed:rbac -- --incremental",
+    "setup-once": "pnpm --filter @coati/api setup-once",
+    "openapi:generate": "pnpm --filter @coati/api openapi:generate",
+    "openapi:apifox": "pnpm --filter @coati/api openapi:apifox",
+    "scaffold": "pnpm --filter @coati/api scaffold",
+    "verify": "pnpm verify:gateway",
+    "lint": "pnpm --filter @coati/api lint",
+    "verify:gateway": "node scripts/verify-gateway.mjs",
+    "bench:gateway": "pnpm --filter @coati/api exec tsx scripts/benchmark-gateway.ts"
+  }
+}
