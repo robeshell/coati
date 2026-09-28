@@ -1,36 +1,53 @@
-<p align="center"><img src="apps/web/public/logo.png" width="80" alt="Coati"></p>
+<p align="center">
+  <img src="apps/web/public/logo.png" width="96" alt="Coati logo">
+</p>
 
-# Coati
+<h1 align="center">Coati</h1>
 
-Coati 是可自行部署的企业级模型网关，使用 **Node.js、TypeScript、Fastify、Drizzle、PostgreSQL、React 和 shadcn/ui**。它提供统一的模型 API 与管理控制台，集中管理模型接入、账号凭证、路由、权限、配额和用量。
+<p align="center">
+  <strong>A self-hosted model gateway for teams.</strong><br>
+  Route model requests, manage access, and track usage from one control plane.
+</p>
 
-## 核心能力
+<p align="center">
+  <a href="https://github.com/robeshell/coati/actions/workflows/ci.yml"><img src="https://github.com/robeshell/coati/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache 2.0 license"></a>
+  <a href=".nvmrc"><img src="https://img.shields.io/badge/Node.js-22-5FA04E" alt="Node.js 22"></a>
+  <a href="apps/api/tsconfig.json"><img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="Strict TypeScript"></a>
+</p>
 
-- OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 接入及协议转换。
-- 模型账号池、公开路由、候选配置、个人渠道、健康探测与故障重试。
-- 用户与角色权限、个人访问密钥、设备授权、共享配额和并发限制。
-- 请求日志、Token 与缓存用量统计、缓存验证、搜索与网页抓取。
-- 审计、通知、文件、系统设置和可选定时任务。
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#connect-an-application">API access</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
 
-项目范围为网关与管理控制台；桌面客户端、产品 CLI、Agent 插件和本机运行环境安装器由各自项目维护。
+---
 
-## 本地开发
+Coati sits between your applications and model providers. Applications connect to a shared API endpoint; administrators manage provider credentials, model routes, permissions, and quotas in a web console.
 
-需要 Node.js 22.19+、pnpm 11、PostgreSQL 14+。
+Expose stable model names to your applications while controlling how requests reach upstream accounts. Keep provider credentials on the server, issue separate access keys to users, and inspect requests and token usage in one place.
 
-```sh
-pnpm install --frozen-lockfile
-createdb coati_node_dev
-createdb coati_node_test
-cp apps/api/.env.example apps/api/.env.development
-# 根据本机环境填写数据库地址；设置独立的 SECRET_KEY 和 GATEWAY_ENCRYPTION_KEY。
-pnpm setup-once
-pnpm dev
-```
+## Capabilities
 
-控制台为 http://localhost:5175，API 为 http://localhost:5004。开发默认账号为 admin / admin123；生产部署必须设置管理员密码和独立密钥。测试使用 TEST_DATABASE_URL 指定的隔离数据库。
+| Area | What Coati provides |
+| --- | --- |
+| **Model APIs** | OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages interfaces, with JSON and SSE protocol conversion. |
+| **Routing** | Public model routes, account pools, fallback candidates, session affinity, and credential health management. |
+| **Access control** | Users, roles, model permissions, personal access keys, device authorization, and revocable sessions. |
+| **Usage controls** | Shared quota reservations, daily token limits, request admission limits, and usage settlement. |
+| **Operations** | Request logs, token and cache usage reports, audit records, and optional account recovery probes. |
+| **Administration** | A React console for model services, routes, personal channels, access management, and system settings. |
 
-## Docker 部署
+Protocol conversion follows explicit policies for fields that cannot be represented across APIs. See the [protocol guide](docs/gateway/protocol.md) for reasoning content, storage semantics, and error handling.
+
+## Quick start
+
+### Deploy with Docker Compose
+
+**Requirements:** Git, Docker with the Compose plugin, and OpenSSL.
 
 ```sh
 git clone https://github.com/robeshell/coati.git
@@ -38,49 +55,150 @@ cd coati
 bash setup.sh
 ```
 
-安装脚本生成本地配置并启动 PostgreSQL 和网关，默认地址为 http://localhost:8080。公网部署使用 HTTPS 反向代理；SSE 需关闭代理缓冲。详见 [部署与运维](docs/gateway/operations.md)。
+The setup script prompts for an administrator password of at least 12 characters and a listening port. It generates independent database, session, and credential-encryption secrets in `.env.production`, builds the application, and starts it with PostgreSQL. Existing configuration is reused on subsequent runs.
 
-## 接入模型 API
-
-先在控制台配置模型服务和公开路由，再创建访问密钥。
-
-| 协议 | 接口 |
-| --- | --- |
-| Chat Completions | POST /api/agent/v1/chat/completions |
-| Responses | POST /api/agent/v1/responses |
-| Messages | POST /api/agent/v1/messages |
+Open **http://localhost:8080** and sign in as **`admin`** with the password you chose. If you selected a different port, use that port instead.
 
 ```sh
-curl "$COATI_BASE_URL/api/agent/v1/chat/completions" \
-  -H "Authorization: Bearer $COATI_API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"your-model","messages":[{"role":"user","content":"Hello"}]}'
+# Check service status
+docker compose --env-file .env.production ps
+
+# Follow application logs
+docker compose --env-file .env.production logs -f app
+
+# Stop the services while retaining data volumes
+docker compose --env-file .env.production down
 ```
 
-[协议说明](docs/gateway/protocol.md) · [设备授权示例](examples/device-auth/README.md) · [OpenAPI](docs/apifox-full.openapi.json)
+The default deployment binds to `127.0.0.1`. For remote access, configure an HTTPS reverse proxy and disable response buffering for SSE. Back up the database and encryption keys together: stored provider credentials cannot be recovered without their encryption key. See [deployment and operations](docs/gateway/operations.md).
 
-## 验证
+### Configure your first model
+
+1. **Add a model service.** Configure an upstream endpoint and its account credentials in the console.
+2. **Create a public route.** Choose the model name applications will use and configure its upstream account selection.
+3. **Issue an access key.** Grant the user access to the required models and set the appropriate limits.
+4. **Send a request.** Use the gateway URL, access key, and public model name in your application.
+
+## Connect an application
+
+Use `http://localhost:8080/api/agent/v1` as the API base URL for clients that accept a custom endpoint. Replace the host with your deployment address.
+
+| Interface | Endpoint |
+| --- | --- |
+| Chat Completions | `POST /api/agent/v1/chat/completions` |
+| Responses | `POST /api/agent/v1/responses` |
+| Messages | `POST /api/agent/v1/messages` |
+
+For a first request, set `COATI_API_TOKEN` to your gateway access key and `COATI_MODEL` to a public model name configured in the console:
 
 ```sh
+export COATI_BASE_URL="http://localhost:8080"
+export COATI_MODEL="your-public-model"
+
+curl --fail-with-body "$COATI_BASE_URL/api/agent/v1/chat/completions" \
+  -H "Authorization: Bearer $COATI_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$COATI_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"
+```
+
+Set `"stream": true` in the request body and use `curl --no-buffer` to consume SSE output. Coati also exposes `/v1` aliases for these model APIs.
+
+For applications using browser-approved sign-in, the [Node.js device authorization example](examples/device-auth/README.md) demonstrates authorization, polling, and authenticated requests without third-party dependencies.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Clients[Applications and API clients] --> Gateway[Coati gateway]
+    Console[Web console] --> Admin[Administration API]
+    Gateway --> Providers[Model provider endpoints]
+    Gateway --> Database[(PostgreSQL)]
+    Admin --> Database
+```
+
+Coati is a TypeScript monorepo. The API uses **Node.js, Fastify, Zod, Drizzle, and PostgreSQL**; the console uses **React, Vite, shadcn/ui, and Tailwind CSS**.
+
+The gateway handles authentication, route selection, quota reservation, upstream execution, streaming, and usage settlement. Model API authentication is separate from the console's cookie and CSRF flow. Request lifecycle controls cover client cancellation, bounded buffering, and graceful shutdown. PostgreSQL stores configuration, credential ciphertext, access-key digests, quota reservations, and operational records.
+
+| Directory | Responsibility |
+| --- | --- |
+| [`apps/api`](apps/api) | Gateway runtime, administration APIs, database schema, and backend tests. |
+| [`apps/web`](apps/web) | Administration console, shared UI components, and frontend tests. |
+| [`docs`](docs) | Architecture, protocol contracts, configuration, and operations. |
+| [`examples`](examples) | Standalone integration examples. |
+| [`scripts`](scripts) | Verification and container smoke-test tooling. |
+
+## Local development
+
+**Requirements:** Node.js 22.19 or later, pnpm 11, and PostgreSQL 14 or later. The repository pins its pnpm version in [`package.json`](package.json).
+
+```sh
+git clone https://github.com/robeshell/coati.git
+cd coati
+pnpm install --frozen-lockfile
+
+createdb coati_node_dev
+createdb coati_node_test
+cp apps/api/.env.example apps/api/.env.development
+```
+
+Edit `apps/api/.env.development` to match your local database connection. Set `SECRET_KEY` and `GATEWAY_ENCRYPTION_KEY` to separate random values; `openssl rand -hex 32` can generate each value. Set `ADMIN_PASSWORD` to your chosen local administrator password.
+
+```sh
+# Initialize the database and synchronize permissions
+pnpm setup-once
+
+# Start the API and console with live reload
+pnpm dev
+```
+
+| Service | Default development address |
+| --- | --- |
+| Console | http://localhost:5175 |
+| API | http://localhost:5004 |
+| Health check | http://localhost:5004/health |
+
+### Validation
+
+Use a dedicated test database. Set `TEST_DATABASE_URL` in your shell or `apps/api/.env.test`; keep it separate from development and production data.
+
+```sh
+export TEST_DATABASE_URL="postgresql://localhost/coati_node_test"
+
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm openapi:generate -- --strict
 pnpm build
 pnpm verify
 pnpm verify:gateway
+node --test examples/device-auth/device-auth.test.mjs
 ```
 
-测试使用本地模拟上游，不调用真实模型。[测试说明](docs/gateway/testing.md)介绍隔离数据库和容器检查。
+`pnpm verify` checks types, database schema state, OpenAPI synchronization, documentation paths, frontend build, backend and frontend tests, and the gateway static checks. `pnpm verify:gateway` runs the focused gateway contract suite. Tests use isolated databases and mock upstreams; they do not call live model providers. See the [testing guide](docs/gateway/testing.md) for container smoke tests and additional checks.
 
-## 项目结构
+## Documentation
 
-- apps/api：Fastify 服务、Drizzle 数据模型、网关和管理模块。
-- apps/web：React / TypeScript 管理控制台。
-- docs：架构、接口、开发规范和运维文档。
-- examples：独立的 Node.js 接入示例。
-- scripts：验证、安装和容器检查工具。
+| Guide | Contents |
+| --- | --- |
+| [Gateway architecture](docs/gateway/architecture.md) | Service boundaries, request lifecycle, and data ownership. |
+| [Protocol behavior](docs/gateway/protocol.md) | API interfaces, conversion policies, streaming, and authorization. |
+| [Configuration](docs/gateway/configuration.md) | Environment variables, credentials, quotas, and optional services. |
+| [Deployment and operations](docs/gateway/operations.md) | Installation, reverse proxies, backups, and upgrades. |
+| [Testing](docs/gateway/testing.md) | Validation commands, isolated environments, and smoke tests. |
+| [OpenAPI specification](docs/apifox-full.openapi.json) | API paths, request schemas, and response contracts. |
+| [Backend architecture](docs/architecture.md) | Module layering, conventions, and development tooling. |
+| [Frontend design system](docs/frontend-design-system.md) | Shared components, styling, and UI conventions. |
 
-## 许可证
+The README is maintained in English. The gateway guides currently use Chinese; source code, integration examples, and the OpenAPI specification are available alongside them.
 
-Coati 使用 [Apache-2.0](LICENSE)。基础框架 castor-kit 使用 MIT，声明见 [第三方许可证](THIRD_PARTY_LICENSES/castor-kit.txt) 和 [NOTICE](NOTICE)。
+## Contributing
+
+Bug reports and pull requests are welcome. For substantial changes, open an [issue](https://github.com/robeshell/coati/issues) to discuss the problem and proposed scope first.
+
+Include reproduction steps for bug reports. For code changes, describe the behavior being changed and the checks you ran. Follow the module boundaries in [AGENTS.md](AGENTS.md), add focused regression coverage where appropriate, and run the relevant validation commands before submitting a pull request. Use synthetic credentials and isolated databases in tests.
+
+## License
+
+Coati is licensed under the [Apache License 2.0](LICENSE).
+
+Built on [castor-kit](https://github.com/robeshell/castor-kit), which is MIT licensed. Its license is preserved in [THIRD_PARTY_LICENSES/castor-kit.txt](THIRD_PARTY_LICENSES/castor-kit.txt); see [NOTICE](NOTICE) for attribution.
