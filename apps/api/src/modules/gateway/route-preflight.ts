@@ -3,16 +3,16 @@ import { publicRouteSchema } from './schema'
 import { routeBase } from './transport'
 import { supportedModels, supportsModel } from './account-models'
 import type { gw_routes, gw_public_routes } from '@/db/schema/gateway'
-import type { RouteMigrationAccount } from './repository'
+import type { RouteConsolidationAccount } from './repository'
 
 type SourceRoute = typeof gw_routes.$inferSelect
-export type RouteMigrationSnapshot = {
+export type RouteConsolidationSnapshot = {
   routes: SourceRoute[]
-  accounts: RouteMigrationAccount[]
+  accounts: RouteConsolidationAccount[]
   publicRoutes: (typeof gw_public_routes.$inferSelect)[]
 }
-export function routeMigrationPreflight(
-  snapshot: RouteMigrationSnapshot,
+export function routeConsolidationPreflight(
+  snapshot: RouteConsolidationSnapshot,
   allowPrivate: boolean,
 ) {
   const accounts = [...snapshot.accounts].sort((a, b) => a.id - b.id)

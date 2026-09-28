@@ -56,7 +56,7 @@ export class WebSearchService {
         headers,
         this.gateway.options.traceKey ?? this.gateway.options.encryptionKey,
       ),
-      expires_at: utcNowIso(new Date(Date.now() + (this.gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)) + 'Z',
+      expires_at: utcNowIso(new Date(Date.now() + (this.gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)),
     }
     const denied = await this.gateway.repo.reserve(key.id, values)
     if (denied) {

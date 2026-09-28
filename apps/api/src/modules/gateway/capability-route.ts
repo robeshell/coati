@@ -2,7 +2,7 @@ import { supportedModels } from './account-models'
 import type { Account, Candidate } from './pool-route'
 
 export type SearchCapability = 'web-search' | 'web-fetch'
-/** Only configured protocols and the legacy DeepSeek same-origin endpoint are eligible. */
+/** Only configured protocols and the alternate DeepSeek same-origin endpoint are eligible. */
 export function capabilityCandidate(account: Account, capability: SearchCapability): Candidate | undefined {
   if (!account.enabled || account.scope !== 'platform' || account.owner_user_id !== null) return
   let upstream = account

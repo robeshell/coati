@@ -1,4 +1,4 @@
-// Ported catalog contract; see the source-hashed Python reference fixture.
+// Provider metadata is validated against independent catalog contract fixtures.
 const providers = [
   {
     code: 'deepseek',

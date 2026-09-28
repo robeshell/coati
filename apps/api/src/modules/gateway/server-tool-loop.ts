@@ -37,7 +37,7 @@ export function serverToolConfigs(body: Obj): Config[] {
     if (!name) continue
     if (configs.some((config) => config.name === name))
       throw new GatewayError(400, '服务端工具声明重复', 'invalid_request')
-    // Python int-or-none: malformed values use the default, negatives clamp to zero.
+    // Gateway int-or-none: malformed values use the default, negatives clamp to zero.
     const raw = tool.max_uses
     const numeric = typeof raw === 'string' && /^[+-]?\d+$/.test(raw.trim()) ? Number(raw)
       : typeof raw === 'number' || typeof raw === 'boolean' ? Number(raw) : NaN
@@ -60,7 +60,7 @@ export function serverToolConfigs(body: Obj): Config[] {
     throw new GatewayError(400, '服务端工具与函数工具名称冲突', 'invalid_request')
   return configs
 }
-/** Match legacy aliases, list-valued queries and JSON-encoded query lists. */
+/** Match alternate aliases, list-valued queries and JSON-encoded query lists. */
 export function searchQueries(input: unknown): string[] {
   if (typeof input === 'string') {
     try { const parsed = JSON.parse(input); input = parsed && !Array.isArray(parsed) && typeof parsed === 'object' ? parsed : {query:input} }
@@ -144,7 +144,7 @@ async function* frames(body: Obj) {
   })
   yield emit('message_stop', { type: 'message_stop' })
 }
-/** Messages server tools complete their loop before emitting SSE, as in Python. */
+/** Messages server tools complete their loop before emitting SSE, after settlement. */
 export async function executeWithServerTools(
   gateway: GatewayService,
   key: Awaited<ReturnType<GatewayService['authenticate']>>,

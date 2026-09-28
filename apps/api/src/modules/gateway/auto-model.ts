@@ -1,4 +1,4 @@
-/** Mirrors Python _body_has_image; detection never downloads or decodes images. */
+/** Mirrors Gateway _body_has_image; detection never downloads or decodes images. */
 export function hasImage(body: Record<string, unknown>): boolean {
   const imageTypes = ['image', 'image_url', 'input_image']
   const object = (value: unknown): Record<string, unknown> =>

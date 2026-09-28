@@ -1,0 +1,14 @@
+{
+  "例如 13800000000": "e.g. 13800000000",
+  "头像": "Avatar",
+  "手机": "Phone",
+  "手机号不能超过 20 个字符": "The phone number must be at most 20 characters",
+  "手机号格式不正确": "Invalid phone number",
+  "昵称": "Nickname",
+  "昵称不能超过 100 个字符": "The nickname must be at most 100 characters",
+  "显示名称，可留空": "Display name (optional)",
+  "邮箱不能超过 100 个字符": "The email must be at most 100 characters",
+  "邮箱格式不正确": "Invalid email address",
+  "完成": "Done",
+  "邮箱": "Email"
+}

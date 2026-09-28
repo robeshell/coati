@@ -1,0 +1,423 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import type { EChartsOption } from 'echarts'
+import { Link, useNavigate } from 'react-router-dom'
+import ReactECharts from '@/shared/components/Chart'
+import { motion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
+import {
+  Activity,
+  ArrowDownRight,
+  ArrowUpRight,
+  ArrowRight,
+  Bot,
+  ChartPie,
+  FileText,
+  LayoutGrid,
+  ListTree,
+  Pause,
+  PenLine,
+  Play,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  Wrench,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { flattenMenus } from '@/components/app/menu-tree'
+import { useAuth } from '@/context/AuthContext'
+import { chartBase, hexToRgba, useChartColors } from '@/lib/chart-theme'
+import { formatBytes, formatRelative } from '@/lib/format'
+import { stagger } from '@/lib/motion'
+import { cn } from '@/lib/utils'
+import { getOperationLogs, type OperationLog } from '@/modules/admin/api/logs'
+import Panel from '@/shared/components/Panel'
+import SegmentedTabs from '@/shared/components/SegmentedTabs'
+import StatCard from '@/shared/components/StatCard'
+import request from '@/shared/api/request'
+import type { ApiResponse } from '@/shared/api/types'
+import { titleIfTruncated } from '@/lib/title-if-truncated'
+
+/** Workbench counters and the last 7 days of operation logs */
+type DashboardStats = ApiResponse<'/api/admin/dashboard/stats'>
+/** Server performance snapshot (net_sent / net_recv: cumulative MB since boot, not a rate) */
+type PerfStats = ApiResponse<'/api/admin/dashboard/system'>
+
+/** Gallery shortcuts; each one shows only when its page is in the user's menus (the gallery may be removed) */
+const QUICK_LINKS = [
+  { label: '页面模板', desc: '列表 · 详情 · 表单 · 看板', icon: LayoutGrid, path: '/component-center/patterns/standard-list' },
+  { label: '数据可视化', desc: '大屏 · 折线 · 热力 · 流量', icon: ChartPie, path: '/component-center/dashboard-page' },
+  { label: 'AI 应用', desc: '对话 · 提示词 · 数据查询', icon: Bot, path: '/component-center/ai/chat' },
+  { label: '编辑器', desc: '富文本 · 代码 · JSON · MD', icon: PenLine, path: '/component-center/editor/rich-text' },
+  { label: '工程工具', desc: '拖拽 · 虚拟滚动 · WS', icon: Wrench, path: '/component-center/devtools/drag-layout' },
+]
+
+const STACK = ['Node.js 22', 'Fastify 5', 'TypeScript', 'Drizzle ORM', 'PostgreSQL', 'React 19', 'shadcn/ui', 'Tailwind CSS', 'Motion', 'ECharts']
+
+// Returns the Chinese source text; translated with t() where it is rendered
+function greeting(hour: number): string {
+  if (hour < 6) return '夜深了'
+  if (hour < 12) return '早上好'
+  if (hour < 14) return '中午好'
+  if (hour < 18) return '下午好'
+  return '晚上好'
+}
+
+interface HealthBarProps {
+  label: ReactNode
+  /** Percentage (0-100) */
+  value?: number
+}
+
+function HealthBar({ label, value }: HealthBarProps) {
+  const pct = Math.max(0, Math.min(100, Math.round(value || 0)))
+  const tone = pct >= 90 ? 'text-danger' : pct >= 80 ? 'text-warning' : 'text-foreground'
+  const bar = pct >= 90 ? 'bg-danger' : pct >= 80 ? 'bg-warning' : 'bg-primary'
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={cn('font-medium tabular-nums', tone)}>{pct}%</span>
+      </div>
+      <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+        <motion.div
+          className={cn('h-full rounded-full', bar)}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ type: 'spring', stiffness: 120, damping: 22 }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function SystemHealth() {
+  const { t } = useTranslation()
+  const [stats, setStats] = useState<PerfStats | null>(null)
+  const [online, setOnline] = useState(true)
+  // Auto-refresh can be paused (WCAG 2.2.2: content that updates on its own needs a pause control)
+  const [running, setRunning] = useState(true)
+
+  useEffect(() => {
+    if (!running) return
+    let alive = true
+    const poll = async () => {
+      try {
+        const data = await request.get<unknown, PerfStats>('/admin/dashboard/system')
+        if (alive) {
+          setStats(data)
+          setOnline(true)
+        }
+      } catch {
+        if (alive) setOnline(false)
+      }
+    }
+    poll()
+    const timer = setInterval(poll, 3000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [running])
+
+  return (
+    <Panel
+      title="系统状态"
+      actions={
+        <div className="flex items-center gap-1">
+          {!stats && online ? null : (
+            <span className={cn('flex items-center gap-1.5 text-xs', online ? 'text-success' : 'text-muted-foreground')}>
+              <span className={cn('relative flex size-1.5 rounded-full', online ? 'bg-success' : 'bg-muted-foreground')}>
+                {online && running ? <span className="bg-success absolute inset-0 animate-ping rounded-full opacity-60" /> : null}
+              </span>
+              {online ? t('运行正常') : t('连接失败')}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={running ? t('暂停自动刷新') : t('继续自动刷新')}
+            onClick={() => setRunning((r) => !r)}
+          >
+            {running ? <Pause /> : <Play />}
+          </Button>
+        </div>
+      }
+      className="h-full"
+    >
+      {!stats && online ? (
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-8" />
+          ))}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <HealthBar label="CPU" value={stats?.cpu} />
+          <HealthBar label={t('内存')} value={stats?.mem_pct} />
+          <HealthBar label={t('磁盘')} value={stats?.disk_pct} />
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            {[
+              { label: '累计发送', value: stats?.net_sent, icon: ArrowUpRight },
+              { label: '累计接收', value: stats?.net_recv, icon: ArrowDownRight },
+            ].map((item) => (
+              <div key={item.label} className="bg-muted/50 rounded-lg px-3 py-2.5">
+                <div className="text-muted-foreground flex items-center gap-1 text-[11px]">
+                  <item.icon className="size-3" />
+                  {t(item.label)}
+                </div>
+                {/* The API reports MB; formatBytes picks a readable unit (a busy host reaches TB since boot) */}
+                <div className="mt-1 text-sm font-medium tabular-nums">{formatBytes((item.value ?? 0) * 1024 * 1024)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+interface ActivityChartProps {
+  /** null while loading; {} when loading failed */
+  stats: Partial<DashboardStats> | null
+}
+
+function ActivityChart({ stats }: ActivityChartProps) {
+  const { t } = useTranslation()
+  const c = useChartColors()
+  const [range, setRange] = useState('7d')
+  const option = useMemo((): EChartsOption => {
+    const base = chartBase(c)
+    const labels = stats?.week_labels?.length ? stats.week_labels : ['', '', '', '', '', '', '']
+    const values = stats?.week_log_counts?.length ? stats.week_log_counts : [0, 0, 0, 0, 0, 0, 0]
+    return {
+      ...base,
+      tooltip: { ...base.tooltip, axisPointer: { type: 'shadow', shadowStyle: { color: hexToRgba(c['muted-foreground'], 0.08) } } },
+      xAxis: { ...base.xAxis, type: 'category', data: labels },
+      yAxis: { ...base.yAxis, type: 'value', minInterval: 1, splitNumber: 4 },
+      series: [
+        {
+          name: t('操作日志'),
+          type: 'bar',
+          data: values,
+          barMaxWidth: 36,
+          itemStyle: {
+            borderRadius: [6, 6, 2, 2],
+            color: {
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: c['brand-from'] },
+                { offset: 1, color: hexToRgba(c['brand-from'], 0.55) },
+              ],
+            },
+          },
+          emphasis: { itemStyle: { color: c['brand-via'] } },
+        },
+      ],
+      animationDuration: 900,
+      animationEasing: 'cubicOut',
+    }
+  }, [c, stats, t])
+
+  const counts = stats?.week_log_counts ?? []
+  const total = counts.reduce((a, b) => a + b, 0)
+  const max = Math.max(0, ...counts)
+  // Text alternative for screen readers: the total and the busiest day
+  const summary =
+    total > 0
+      ? t('近 7 天操作日志柱状图，共 {{count}} 条，最多的一天是 {{day}}，{{max}} 条', {
+          count: total,
+          day: stats?.week_labels?.[counts.indexOf(max)] ?? '',
+          max,
+        })
+      : t('近 7 天操作日志柱状图，暂无记录')
+  return (
+    <Panel
+      title="系统活跃度"
+      description={stats ? t('近 7 天操作日志，共 {{count}} 条', { count: total }) : '\u00a0'}
+      actions={<SegmentedTabs variant="pill" value={range} onChange={setRange} items={[{ value: '7d', label: '7 天' }]} />}
+      className="h-full"
+    >
+      {stats ? (
+        <ReactECharts option={option} summary={summary} style={{ height: 248 }} notMerge opts={{ renderer: 'svg' }} />
+      ) : (
+        <Skeleton className="h-[248px] w-full" />
+      )}
+    </Panel>
+  )
+}
+
+function RecentActivity() {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const [logs, setLogs] = useState<OperationLog[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getOperationLogs({ page: 1, per_page: 7 })
+      .then((data) => setLogs(data.items))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <Panel
+      title="最近操作"
+      padded={false}
+      actions={
+        <Button variant="ghost" size="sm" className="text-primary h-7 px-2 text-xs" onClick={() => navigate('/system/logs')}>
+          {t('查看审计日志')}
+          <ArrowRight />
+        </Button>
+      }
+    >
+      {loading ? (
+        <div className="space-y-2 px-5 pb-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-9" />
+          ))}
+        </div>
+      ) : logs.length === 0 ? (
+        <div className="text-muted-foreground px-5 pb-8 text-center text-sm">{t('暂无操作记录')}</div>
+      ) : (
+        <motion.ul variants={stagger.container} initial="hidden" animate="show">
+          {logs.map((log) => (
+            <motion.li
+              key={log.id}
+              variants={stagger.item}
+              className="hover:bg-muted/40 grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 border-t px-5 py-2.5 text-[13px] transition-colors"
+            >
+              <span className="bg-muted flex size-7 items-center justify-center rounded-full text-[11px] font-medium">
+                {(log.username || '?').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 truncate" onMouseEnter={titleIfTruncated}>
+                <span className="font-medium">{log.username}</span>
+                <span className="text-muted-foreground ml-2 text-[11px] font-medium">{log.method}</span>
+                <span className="text-muted-foreground ml-1.5">{log.path}</span>
+              </span>
+              <span className="flex items-center gap-2">
+                {log.status_code !== null && log.status_code >= 400 ? (
+                  <span className="text-danger text-[11px] font-medium tabular-nums">{log.status_code}</span>
+                ) : null}
+                <span className="bg-muted text-muted-foreground rounded-md px-1.5 py-0.5 text-[11px]">{log.module}</span>
+                <span className="text-muted-foreground w-16 text-right text-xs tabular-nums">{formatRelative(log.created_at)}</span>
+              </span>
+            </motion.li>
+          ))}
+        </motion.ul>
+      )}
+    </Panel>
+  )
+}
+
+export default function Dashboard() {
+  const { t, i18n } = useTranslation()
+  const { user, menus } = useAuth()
+  // Links point only at pages the user can open (menus they hold; a removed gallery has none)
+  const openable = useMemo(() => new Set(flattenMenus(menus).map((m) => m.path)), [menus])
+  const quickLinks = QUICK_LINKS.filter((item) => openable.has(item.path))
+  // null while loading, {} when loading failed (the cards then show 0)
+  const [stats, setStats] = useState<Partial<DashboardStats> | null>(null)
+  const now = new Date()
+
+  useEffect(() => {
+    request
+      // Error responses reject (the interceptor), so a resolved body is always the stats
+      .get<unknown, DashboardStats>('/admin/dashboard/stats')
+      .then((data) => setStats(data))
+      .catch(() => setStats({}))
+  }, [])
+
+  const dateText = new Intl.DateTimeFormat(i18n.language, { month: 'long', day: 'numeric', weekday: 'long' }).format(now)
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-muted-foreground text-[13px]">{dateText}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {t('{{greeting}}，{{name}}', { greeting: t(greeting(now.getHours())), name: user?.username })}
+          </h1>
+        </div>
+        <div className="flex gap-2">
+          {openable.has('/system/logs') ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/system/logs">
+                <FileText />
+                {t('审计日志')}
+              </Link>
+            </Button>
+          ) : null}
+          {openable.has('/component-center/ai/chat') ? (
+            <Button size="sm" variant="brand" asChild>
+              <Link to="/component-center/ai/chat">
+                <Sparkles />
+                {t('问问 AI')}
+              </Link>
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="注册用户" value={stats?.user_count ?? 0} loading={!stats} suffix="人" icon={Users} />
+        <StatCard label="菜单数量" value={stats?.menu_count ?? 0} loading={!stats} suffix="项" icon={ListTree} />
+        <StatCard label="角色权限" value={stats?.role_count ?? 0} loading={!stats} suffix="个" icon={ShieldCheck} />
+        <StatCard label="今日日志" value={stats?.today_log_count ?? 0} loading={!stats} suffix="条" icon={Activity} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <ActivityChart stats={stats} />
+        </div>
+        <SystemHealth />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <RecentActivity />
+        </div>
+        <div className="space-y-4">
+          {quickLinks.length > 0 ? (
+            <Panel title="组件中心">
+              <div className="grid grid-cols-2 gap-2">
+                {quickLinks.map((item) => (
+                  <Link
+                    key={item.label}
+                    to={item.path}
+                    className="group hover:bg-muted/60 flex items-start gap-2.5 rounded-lg p-2.5 transition-colors last:odd:col-span-2"
+                  >
+                    <span className="bg-brand-soft text-primary flex size-8 shrink-0 items-center justify-center rounded-lg transition-transform duration-200 group-hover:scale-105">
+                      <item.icon className="size-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{t(item.label)}</span>
+                      <span className="text-muted-foreground block truncate text-[11px]" onMouseEnter={titleIfTruncated}>{t(item.desc)}</span>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </Panel>
+          ) : null}
+          <Panel title="技术栈">
+            <div className="flex flex-wrap gap-1.5">
+              {STACK.map((s) => (
+                <span key={s} className="text-muted-foreground rounded-md border px-2 py-0.5 text-[11px]">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -4,12 +4,12 @@ import {
   isObject,
   truthy,
   get,
-  pythonJson,
+  wireJson,
   streamErrorMessage,
   ProtocolBridgeError,
 } from './compat-helpers'
 export const sse = (event: string, payload: Obj) =>
-  `event: ${event}\ndata: ${pythonJson(payload)}\n\n`
+  `event: ${event}\ndata: ${wireJson(payload)}\n\n`
 export const done = () => 'data: [DONE]\n\n'
 export function chatChunk(
   id: unknown,
@@ -25,7 +25,7 @@ export function chatChunk(
     choices: [{ index: 0, delta, finish_reason: finish }],
   }
   if (usage != null) payload.usage = usage
-  return `data: ${pythonJson(payload)}\n\n`
+  return `data: ${wireJson(payload)}\n\n`
 }
 export function anthropicUsage(raw: unknown): Obj {
   const usage = object(raw),

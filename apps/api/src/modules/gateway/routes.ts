@@ -1,3 +1,4 @@
+import { gatewayBodyRoute, readGatewayAdminBody } from './admin-body'
 import { registerGatewayLifecycle } from './runtime-http'
 import {
   getCurrentAdminUser,
@@ -11,15 +12,15 @@ import { protocolCatalog, providerCatalog } from './account-catalog'
 import { accountSummary } from './account-metadata'
 import { GatewayAdminService } from './admin-service'
 import { CacheTestService } from './cache-test'
-import { legacyCacheTest } from './cache-test-compat'
-import { legacyAccountRecord } from './legacy-account-list'
+import { cacheTestView } from './cache-test-compat'
+import { accountView } from './account-list'
 import {
-  checkLegacyAccount,
-  discoverLegacyAccounts,
-  probeLegacyAccounts,
-  saveLegacyAccount,
-} from './legacy-account-write'
-import { LegacyPatService, legacyPat } from './legacy-pat'
+  checkAccount,
+  discoverAccounts,
+  probeAccounts,
+  saveAccount,
+} from './account-write'
+import { PersonalAccessService, accessTokenView } from './personal-access'
 import { ModelProfileService } from './model-profile'
 import {
   discoverPersonalModels,
@@ -44,9 +45,9 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   const searchSettings = new SearchSettingsService(service)
   for(const prefix of ['/api/admin/gateway/web-search','/api/admin/agent/web-search']) {
     app.get(prefix,{preHandler:menuPermissionRequired('gateway_websearch')},()=>searchSettings.view())
-    app.put(prefix,{preHandler:menuPermissionRequired('gateway_websearch_edit')},request=>searchSettings.save(request.body))
+    app.put(prefix,{ ...{preHandler:menuPermissionRequired('gateway_websearch_edit')}, ...gatewayBodyRoute('PUT', prefix) },request=>searchSettings.save(readGatewayAdminBody(request)))
     app.delete(prefix,{preHandler:menuPermissionRequired('gateway_websearch_edit')},()=>searchSettings.reset())
-    app.post(prefix+'/test',{preHandler:menuPermissionRequired('gateway_websearch_edit')},async(request,reply)=>{
+    app.post(prefix+'/test',{ ...{preHandler:menuPermissionRequired('gateway_websearch_edit')}, ...gatewayBodyRoute('POST', prefix+'/test') },async(request,reply)=>{
       const abort=new AbortController()
       const closed=()=>{if(!reply.raw.writableFinished)abort.abort()}
       reply.raw.on('close',closed)
@@ -71,14 +72,14 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     )
     app.post(
       prefix,
-      { preHandler: menuPermissionRequired('gateway_model_profiles_add') },
+      { ...{ preHandler: menuPermissionRequired('gateway_model_profiles_add') }, ...gatewayBodyRoute('POST', prefix) },
       async (request, reply) =>
-        reply.code(201).send(await profiles.save(request.body)),
+        reply.code(201).send(await profiles.save(readGatewayAdminBody(request))),
     )
     app.put(
       prefix + '/:id',
-      { preHandler: menuPermissionRequired('gateway_model_profiles_edit') },
-      async (request) => profiles.save(request.body, idOf(request)),
+      { ...{ preHandler: menuPermissionRequired('gateway_model_profiles_edit') }, ...gatewayBodyRoute('PUT', prefix + '/:id') },
+      async (request) => profiles.save(readGatewayAdminBody(request), idOf(request)),
     )
     app.delete(
       prefix + '/:id',
@@ -87,19 +88,19 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     )
     app.post(
       prefix + '/sync',
-      { preHandler: menuPermissionRequired('gateway_model_profiles_edit') },
-      async (request) => profiles.sync(request.body),
+      { ...{ preHandler: menuPermissionRequired('gateway_model_profiles_edit') }, ...gatewayBodyRoute('POST', prefix + '/sync') },
+      async (request) => profiles.sync(readGatewayAdminBody(request)),
     )
   }
   const owner = async (request: FastifyRequest) =>
     (await getCurrentAdminUser(request))!.id
   const cacheTests = new CacheTestService(service)
   for (const prefix of ['/api/admin/gateway/cache-tests', '/api/admin/agent/cache-tests']) {
-    const legacy = prefix.includes('/agent/')
+    const agentView = prefix.includes('/agent/')
     const view = { preHandler: menuPermissionRequired('gateway_cache_tests') }
     app.get(prefix, view, async request => {
-      const result=await cacheTests.page(await owner(request),request.query,legacy)
-      return legacy?{...result,items:result.items.map(legacyCacheTest)}:result
+      const result=await cacheTests.page(await owner(request),request.query,agentView)
+      return agentView?{...result,items:result.items.map(cacheTestView)}:result
     })
     app.get(prefix + '/keys', view, async request => ({items:await cacheTests.keys(await owner(request))}))
     app.get(prefix + '/models', view, async request => {
@@ -107,16 +108,16 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       const result = await cacheTests.models(await owner(request), query.key_id)
       return {models:result.data.map(row=>row.id),default_model:result.data[0]?.id ?? null}
     })
-    app.get(prefix + '/:id', view, async request => {const result=await cacheTests.get(await owner(request),idOf(request));return legacy?legacyCacheTest(result):result})
+    app.get(prefix + '/:id', view, async request => {const result=await cacheTests.get(await owner(request),idOf(request));return agentView?cacheTestView(result):result})
     app.delete(prefix + '/:id', {preHandler:menuPermissionRequired('gateway_cache_tests_delete')}, async request=>cacheTests.remove(await owner(request), idOf(request)))
-    app.post(prefix, {preHandler:menuPermissionRequired('gateway_cache_tests_run')}, async (request,reply)=>{
+    app.post(prefix, { ...{preHandler:menuPermissionRequired('gateway_cache_tests_run')}, ...gatewayBodyRoute('POST', prefix) }, async (request,reply)=>{
       const abort = new AbortController()
       const onClose=()=>{if(!reply.raw.writableFinished)abort.abort()}
       reply.raw.on('close',onClose)
       boundResponseLifetime(reply.raw, 910000)
       try {
-        const result=await cacheTests.run(await owner(request),request.body,AbortSignal.any([abort.signal,AbortSignal.timeout(900000)]))
-        return reply.code(201).send(legacy?legacyCacheTest(result):result)
+        const result=await cacheTests.run(await owner(request),readGatewayAdminBody(request),AbortSignal.any([abort.signal,AbortSignal.timeout(900000)]))
+        return reply.code(201).send(agentView?cacheTestView(result):result)
       } finally {reply.raw.off('close',onClose)}
     })
   }
@@ -140,14 +141,14 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       personal ? await owner(request) : undefined
     app.post(
       path,
-      { preHandler: menuPermissionRequired(permission + '_add') },
+      { ...{ preHandler: menuPermissionRequired(permission + '_add') }, ...gatewayBodyRoute('POST', path) },
       async (request, reply) =>
         reply
           .code(201)
           .send(
-            await saveLegacyAccount(
+            await saveAccount(
               service,
-              request.body,
+              readGatewayAdminBody(request),
               undefined,
               await actor(request),
             ),
@@ -155,11 +156,11 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     )
     app.put(
       path + '/:id',
-      { preHandler: menuPermissionRequired(permission + '_edit') },
+      { ...{ preHandler: menuPermissionRequired(permission + '_edit') }, ...gatewayBodyRoute('PUT', path + '/:id') },
       async (request) =>
-        saveLegacyAccount(
+        saveAccount(
           service,
-          request.body,
+          readGatewayAdminBody(request),
           idOf(request),
           await actor(request),
         ),
@@ -175,33 +176,33 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
       : 'gateway_upstreams_test'
     app.post(
       path + '/discover-models',
-      { preHandler: menuPermissionRequired(probePermission) },
+      { ...{ preHandler: menuPermissionRequired(probePermission) }, ...gatewayBodyRoute('POST', path + '/discover-models') },
       async (request) =>
-        discoverLegacyAccounts(service, request.body, await actor(request)),
+        discoverAccounts(service, readGatewayAdminBody(request), await actor(request)),
     )
     app.post(
       path + '/:id/check',
-      { preHandler: menuPermissionRequired(probePermission) },
+      { ...{ preHandler: menuPermissionRequired(probePermission) }, ...gatewayBodyRoute('POST', path + '/:id/check') },
       async (request) =>
-        checkLegacyAccount(service, idOf(request), await actor(request)),
+        checkAccount(service, idOf(request), await actor(request)),
     )
   }
   app.post(
     '/api/admin/agent/credentials/:id/copy',
-    { preHandler: menuPermissionRequired('gateway_upstreams_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_upstreams_add') }, ...gatewayBodyRoute('POST', '/api/admin/agent/credentials/:id/copy') },
     async (request, reply) =>
       reply
         .code(201)
         .send(
-          legacyAccountRecord(
+          accountView(
             await admin.copyAccount(idOf(request)),
           ),
         ),
   )
   app.post(
     '/api/admin/agent/credentials/health-probe',
-    { preHandler: menuPermissionRequired('gateway_upstreams_test') },
-    async (request) => probeLegacyAccounts(service, request.body),
+    { ...{ preHandler: menuPermissionRequired('gateway_upstreams_test') }, ...gatewayBodyRoute('POST', '/api/admin/agent/credentials/health-probe') },
+    async (request) => probeAccounts(service, readGatewayAdminBody(request)),
   )
   for (const scope of ['platform', 'personal'] as const) {
     const permission =
@@ -225,13 +226,13 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   }
   app.post(
     '/api/admin/gateway/my-channels/discover-models',
-    { preHandler: menuPermissionRequired('gateway_my_channels_test') },
+    { ...{ preHandler: menuPermissionRequired('gateway_my_channels_test') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/my-channels/discover-models') },
     async (request) =>
-      discoverPersonalModels(service, await owner(request), request.body),
+      discoverPersonalModels(service, await owner(request), readGatewayAdminBody(request)),
   )
   app.post(
     '/api/admin/gateway/my-channels/:id/check',
-    { preHandler: menuPermissionRequired('gateway_my_channels_test') },
+    { ...{ preHandler: menuPermissionRequired('gateway_my_channels_test') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/my-channels/:id/check') },
     async (request) =>
       service.probeUpstream(idOf(request), 0, await owner(request)),
   )
@@ -243,7 +244,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.post(
     '/api/admin/gateway/my-channels',
-    { preHandler: menuPermissionRequired('gateway_my_channels_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_my_channels_add') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/my-channels') },
     async (request, reply) =>
       reply
         .code(201)
@@ -251,18 +252,18 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
           await savePersonalChannel(
             service,
             await owner(request),
-            request.body,
+            readGatewayAdminBody(request),
           ),
         ),
   )
   app.put(
     '/api/admin/gateway/my-channels/:id',
-    { preHandler: menuPermissionRequired('gateway_my_channels_edit') },
+    { ...{ preHandler: menuPermissionRequired('gateway_my_channels_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/gateway/my-channels/:id') },
     async (request) =>
       savePersonalChannel(
         service,
         await owner(request),
-        request.body,
+        readGatewayAdminBody(request),
         idOf(request),
       ),
   )
@@ -275,53 +276,53 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   app.get(
     '/api/admin/agent/routes',
     { preHandler: menuPermissionRequired('gateway_routes') },
-    async (request) => admin.legacyRoutes(request.query),
+    async (request) => admin.candidateRoutes(request.query),
   )
   app.post(
     '/api/admin/agent/routes',
-    { preHandler: menuPermissionRequired('gateway_routes_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_add') }, ...gatewayBodyRoute('POST', '/api/admin/agent/routes') },
     async (request, reply) =>
       reply
         .code(201)
         .send(
-          await admin.saveLegacyRoute(request.body,
+          await admin.saveCandidateRoute(readGatewayAdminBody(request),
           ),
         ),
   )
   app.put(
     '/api/admin/agent/routes/:id',
-    { preHandler: menuPermissionRequired('gateway_routes_edit') },
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/agent/routes/:id') },
     async (request) =>
-      admin.saveLegacyRoute(request.body,
+      admin.saveCandidateRoute(readGatewayAdminBody(request),
         idOf(request),
       ),
   )
   app.delete(
     '/api/admin/agent/routes/:id',
     { preHandler: menuPermissionRequired('gateway_routes_delete') },
-    async (request) => admin.deleteLegacyRoute(idOf(request)),
+    async (request) => admin.deleteCandidateRoute(idOf(request)),
   )
   app.get(
-    '/api/admin/gateway/route-migration/preflight',
+    '/api/admin/gateway/route-consolidation/preflight',
     { preHandler: menuPermissionRequired('gateway_routes') },
-    async () => service.routeMigrationPreflight(),
+    async () => service.routeConsolidationPreflight(),
   )
   app.get(
-    '/api/admin/gateway/route-migration/history',
+    '/api/admin/gateway/route-consolidation/history',
     { preHandler: menuPermissionRequired('gateway_routes') },
-    async () => ({ items: await service.routeMigrations() }),
+    async () => ({ items: await service.routeConsolidations() }),
   )
   app.post(
-    '/api/admin/gateway/route-migration/apply',
-    { preHandler: menuPermissionRequired('gateway_routes_edit') },
+    '/api/admin/gateway/route-consolidation/apply',
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_edit') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/route-consolidation/apply') },
     async (request) =>
-      service.applyRouteMigration(request.body, await owner(request)),
+      service.applyRouteConsolidation(readGatewayAdminBody(request), await owner(request)),
   )
   app.post(
-    '/api/admin/gateway/route-migration/:id/rollback',
-    { preHandler: menuPermissionRequired('gateway_routes_edit') },
+    '/api/admin/gateway/route-consolidation/:id/rollback',
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_edit') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/route-consolidation/:id/rollback') },
     async (request) =>
-      service.rollbackRouteMigration(
+      service.rollbackRouteConsolidation(
         (request.params as { id: string }).id,
         await owner(request),
       ),
@@ -333,21 +334,21 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.post(
     '/api/admin/gateway/public-routes',
-    { preHandler: menuPermissionRequired('gateway_routes_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_add') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/public-routes') },
     async (request, reply) =>
-      reply.code(201).send(await service.savePublicRoute(request.body)),
+      reply.code(201).send(await service.savePublicRoute(readGatewayAdminBody(request))),
   )
   app.put(
     '/api/admin/gateway/public-routes/:id',
-    { preHandler: menuPermissionRequired('gateway_routes_edit') },
-    async (request) => service.savePublicRoute(request.body, idOf(request)),
+    { ...{ preHandler: menuPermissionRequired('gateway_routes_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/gateway/public-routes/:id') },
+    async (request) => service.savePublicRoute(readGatewayAdminBody(request), idOf(request)),
   )
   app.delete(
     '/api/admin/gateway/public-routes/:id',
     { preHandler: menuPermissionRequired('gateway_routes_delete') },
     async (request) => admin.deletePublicRoute(idOf(request)),
   )
-  const pats = new LegacyPatService(service)
+  const pats = new PersonalAccessService(service)
   app.get(
     '/api/admin/agent/usage',
     { preHandler: menuPermissionRequired('gateway_requests') },
@@ -366,11 +367,11 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.post(
     '/api/agent/me/usage/export',
-    { preHandler: menuPermissionRequired('gateway_my_usage_export') },
+    { ...{ preHandler: menuPermissionRequired('gateway_my_usage_export') }, ...gatewayBodyRoute('POST', '/api/agent/me/usage/export') },
     async (request, reply) =>
       sendTable(
         reply,
-        await exportPersonalUsage(pats, await owner(request), request.body),
+        await exportPersonalUsage(pats, await owner(request), readGatewayAdminBody(request)),
       ),
   )
   app.get(
@@ -392,34 +393,34 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.post(
     '/api/agent/auth/pat',
-    { preHandler: menuPermissionRequired('gateway_keys_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_add') }, ...gatewayBodyRoute('POST', '/api/agent/auth/pat') },
     async (request, reply) =>
       reply
         .code(201)
-        .send(await pats.create(await owner(request), request.body)),
+        .send(await pats.create(await owner(request), readGatewayAdminBody(request))),
   )
   app.put(
     '/api/agent/auth/pat/:id',
-    { preHandler: menuPermissionRequired('gateway_keys_edit') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_edit') }, ...gatewayBodyRoute('PUT', '/api/agent/auth/pat/:id') },
     async (request) =>
-      legacyPat(
+      accessTokenView(
         await service.updateKey(
           await owner(request),
           idOf(request),
-          request.body,
+          readGatewayAdminBody(request),
         ),
       ),
   )
   app.post(
     '/api/agent/auth/pat/:id/rotate',
-    { preHandler: menuPermissionRequired('gateway_keys_rotate') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_rotate') }, ...gatewayBodyRoute('POST', '/api/agent/auth/pat/:id/rotate') },
     async (request, reply) => {
       const replacement = await service.rotateKey(
         await owner(request),
         idOf(request),
       )
       return reply.code(201).send({
-        ...legacyPat(replacement),
+        ...accessTokenView(replacement),
         token: replacement.token,
         rotated_from_id: replacement.rotated_from_id,
       })
@@ -430,7 +431,7 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     { preHandler: menuPermissionRequired('gateway_keys_delete') },
     async (request) => {
       const row = await admin.revokeKey(idOf(request), await owner(request))
-      return legacyPat(row)
+      return accessTokenView(row)
     },
   )
   app.get(
@@ -440,8 +441,8 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.put(
     '/api/admin/agent/quotas/:id',
-    { preHandler: menuPermissionRequired('gateway_requests_quota_edit') },
-    (request) => admin.updateQuota(idOf(request), request.body),
+    { ...{ preHandler: menuPermissionRequired('gateway_requests_quota_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/agent/quotas/:id') },
+    (request) => admin.updateQuota(idOf(request), readGatewayAdminBody(request)),
   )
   app.get(
     '/api/admin/gateway/user-limits/:id',
@@ -450,12 +451,12 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.put(
     '/api/admin/gateway/user-limits/:id',
-    { preHandler: menuPermissionRequired('system_users_edit') },
-    async (request) => service.saveUserLimits(idOf(request), request.body),
+    { ...{ preHandler: menuPermissionRequired('system_users_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/gateway/user-limits/:id') },
+    async (request) => service.saveUserLimits(idOf(request), readGatewayAdminBody(request)),
   )
   app.post(
     '/api/admin/gateway/upstreams/:id/probe',
-    { preHandler: menuPermissionRequired('gateway_upstreams_test') },
+    { ...{ preHandler: menuPermissionRequired('gateway_upstreams_test') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/upstreams/:id/probe') },
     async (request) => service.probeUpstream(idOf(request)),
   )
   for (const resource of ['upstreams', 'routes'] as const) {
@@ -472,23 +473,23 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     )
     app.post(
       path,
-      { preHandler: menuPermissionRequired(permission + '_add') },
+      { ...{ preHandler: menuPermissionRequired(permission + '_add') }, ...gatewayBodyRoute('POST', path) },
       async (request, reply) =>
         reply
           .code(201)
           .send(
             resource === 'upstreams'
-              ? await service.saveUpstream(request.body)
-              : await service.saveRoute(request.body),
+              ? await service.saveUpstream(readGatewayAdminBody(request))
+              : await service.saveRoute(readGatewayAdminBody(request)),
           ),
     )
     app.put(
       path + '/:id',
-      { preHandler: menuPermissionRequired(permission + '_edit') },
+      { ...{ preHandler: menuPermissionRequired(permission + '_edit') }, ...gatewayBodyRoute('PUT', path + '/:id') },
       async (request) =>
         resource === 'upstreams'
-          ? service.saveUpstream(request.body, idOf(request))
-          : service.saveRoute(request.body, idOf(request)),
+          ? service.saveUpstream(readGatewayAdminBody(request), idOf(request))
+          : service.saveRoute(readGatewayAdminBody(request), idOf(request)),
     )
     app.delete(
       path + '/:id',
@@ -505,15 +506,15 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.post(
     '/api/admin/gateway/keys',
-    { preHandler: menuPermissionRequired('gateway_keys_add') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_add') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/keys') },
     async (request, reply) =>
       reply
         .code(201)
-        .send(await service.createKey(await owner(request), request.body)),
+        .send(await service.createKey(await owner(request), readGatewayAdminBody(request))),
   )
   app.post(
     '/api/admin/gateway/keys/:id/rotate',
-    { preHandler: menuPermissionRequired('gateway_keys_rotate') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_rotate') }, ...gatewayBodyRoute('POST', '/api/admin/gateway/keys/:id/rotate') },
     async (request, reply) =>
       reply
         .code(201)
@@ -521,9 +522,9 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
   )
   app.put(
     '/api/admin/gateway/keys/:id',
-    { preHandler: menuPermissionRequired('gateway_keys_edit') },
+    { ...{ preHandler: menuPermissionRequired('gateway_keys_edit') }, ...gatewayBodyRoute('PUT', '/api/admin/gateway/keys/:id') },
     async (request) =>
-      service.updateKey(await owner(request), idOf(request), request.body),
+      service.updateKey(await owner(request), idOf(request), readGatewayAdminBody(request)),
   )
   app.delete(
     '/api/admin/gateway/keys/:id',
@@ -568,14 +569,14 @@ export async function registerGatewayAdmin(app: FastifyInstance) {
     ] as const) {
       app.post(
         prefix + '/' + action,
-        { preHandler: menuPermissionRequired('gateway_device_confirm_action') },
+        { ...{ preHandler: menuPermissionRequired('gateway_device_confirm_action') }, ...gatewayBodyRoute('POST', prefix + '/' + action) },
         async (request, reply) => {
-          const legacy = prefix === '/api/agent/auth/device'
+          const agentView = prefix === '/api/agent/auth/device'
           try {
-            const result = await service.decideDevice(await owner(request), request.body, decision)
-            return legacy ? { ok: result.ok, user_code: result.user_code } : result
+            const result = await service.decideDevice(await owner(request), readGatewayAdminBody(request), decision)
+            return agentView ? { ok: result.ok, user_code: result.user_code } : result
           } catch (error) {
-            if (legacy && error instanceof GatewayError)
+            if (agentView && error instanceof GatewayError)
               return reply.code(error.status).send({ error: error.message })
             throw error
           }

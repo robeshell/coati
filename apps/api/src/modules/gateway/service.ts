@@ -19,7 +19,7 @@ import { ModelProfileRepository } from './model-profile-repository'
 import { personalModelNames } from './personal-route'
 import { reservationTtlSeconds } from './quota-policy'
 import { GatewayRepository, type KeyRow } from './repository'
-import { routeMigrationPreflight } from './route-preflight'
+import { routeConsolidationPreflight } from './route-preflight'
 import { schedulingPolicy, type SchedulingPolicy } from './scheduling-policy'
 import {
   GatewayError,
@@ -257,16 +257,16 @@ export class GatewayService {
     await this.userLimits(owner)
     return this.repo.saveUserLimits(owner, limits)
   }
-  async routeMigrationPreflight() {
-    return routeMigrationPreflight(
-      await this.repo.routeMigrationSnapshot(),
+  async routeConsolidationPreflight() {
+    return routeConsolidationPreflight(
+      await this.repo.routeConsolidationSnapshot(),
       this.options.allowPrivate,
     )
   }
-  routeMigrations() {
-    return this.repo.routeMigrations()
+  routeConsolidations() {
+    return this.repo.routeConsolidations()
   }
-  async applyRouteMigration(body: unknown, actor: number) {
+  async applyRouteConsolidation(body: unknown, actor: number) {
     const data = z
       .object({
         model: z.string().min(1).max(200),
@@ -274,8 +274,8 @@ export class GatewayService {
       })
       .strict()
       .parse(body)
-    return this.migrationWrite(() =>
-      this.repo.applyRouteMigration(
+    return this.consolidationWrite(() =>
+      this.repo.applyRouteConsolidation(
         data.model,
         data.version,
         actor,
@@ -283,12 +283,12 @@ export class GatewayService {
       ),
     )
   }
-  rollbackRouteMigration(id: string, actor: number) {
-    return this.migrationWrite(() =>
-      this.repo.rollbackRouteMigration(z.uuid().parse(id), actor),
+  rollbackRouteConsolidation(id: string, actor: number) {
+    return this.consolidationWrite(() =>
+      this.repo.rollbackRouteConsolidation(z.uuid().parse(id), actor),
     )
   }
-  private async migrationWrite<T>(operation: () => Promise<T>): Promise<T> {
+  private async consolidationWrite<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation()
     } catch (error) {
@@ -384,7 +384,7 @@ export class GatewayService {
       digest: hashToken(token),
       prefix: token.slice(0, 12),
       expires_at:
-        expires_days === null ? null : utcNowIso(new Date(Date.now() + expires_days * 86400000)) + 'Z',
+        expires_days === null ? null : utcNowIso(new Date(Date.now() + expires_days * 86400000)),
     })
     const { digest: _digest, ...safe } = row
     return { ...safe, token }
@@ -582,7 +582,7 @@ export class GatewayService {
     const admission = await this.repo.createDevice({
       device_hash: hashToken(deviceCode),
       user_code: userCode,
-      expires_at: utcNowIso(new Date(Date.now() + policy.ttlSeconds * 1000)) + 'Z',
+      expires_at: utcNowIso(new Date(Date.now() + policy.ttlSeconds * 1000)),
     })
     if (admission === 'rate_limited')
       throw new GatewayError(
@@ -619,7 +619,7 @@ export class GatewayService {
         daily_limit: 0,
         concurrency_limit: 0,
         rpm_limit: 0,
-        expires_at: utcNowIso(new Date(Date.now() + 30 * 86400000)) + 'Z',
+        expires_at: utcNowIso(new Date(Date.now() + 30 * 86400000)),
       })
     if (typeof result === 'string')
       throw new GatewayError(

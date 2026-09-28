@@ -23,7 +23,7 @@ test('explicit headers take precedence; prompt similarity never creates affinity
     ),
   ).toBeUndefined()
 })
-test('binding scope isolates users/models and accepts legacy body aliases', () => {
+test('binding scope isolates users/models and accepts alternate body aliases', () => {
   const a = sessionScope(1, 'model', { prompt_cache_key: 'a' }, {}, 'secret')
   expect(a).toBe(
     sessionScope(1, 'model', { conversation: { id: 'a' } }, {}, 'secret'),
@@ -36,7 +36,7 @@ test('binding scope isolates users/models and accepts legacy body aliases', () =
   )
 })
 
-test('long identifiers follow Python HMAC normalization and mappings isolate bindings', () => {
+test('long identifiers follow Gateway HMAC normalization and mappings isolate bindings', () => {
   const long = 'a'.repeat(65)
   expect(explicitSessionId({ session_id: long }, {}, 'secret')).toBe('id_' + createHmac('sha256', 'secret').update(long).digest('hex').slice(0, 61))
   expect(explicitSessionId({ session_id: '🐾'.repeat(64) }, {}, 'secret')).toBe('🐾'.repeat(64))

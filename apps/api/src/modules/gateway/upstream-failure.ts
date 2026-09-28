@@ -1,4 +1,4 @@
-/** Python gateway HTTP classification, including its deliberate 429 billing exception. */
+/** Gateway gateway HTTP classification, including its deliberate 429 billing exception. */
 export function classifyUpstreamHttp(status: number, body = '') {
   const billing = [
     'insufficient balance',

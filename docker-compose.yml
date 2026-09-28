@@ -21,6 +21,7 @@ services:
       - "${BIND_HOST:-127.0.0.1}:${APP_PORT:-8080}:5000"
     environment: &gateway_environment
       NODE_ENV: production
+      APP_NAME: ${APP_NAME:-Coati}
       DATABASE_URL: postgresql://coati:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db/coati
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
       GATEWAY_ENCRYPTION_KEY: ${GATEWAY_ENCRYPTION_KEY:?Set GATEWAY_ENCRYPTION_KEY}

@@ -2,7 +2,7 @@ import { array, object, type Obj } from './protocol/compat-helpers'
 
 const leads = ['perform a web search for the query:', 'perform a web search for:']
 
-/** Match the legacy dedicated search prompt; ordinary questions still need the model. */
+/** Match the alternate dedicated search prompt; ordinary questions still need the model. */
 export function searchOnlyQuery(body: Obj): string | undefined {
   if (['0', 'false', 'no', 'off'].includes((process.env.AGENT_WEB_SEARCH_SHORTCUT_ENABLED ?? 'true').trim().toLowerCase())) return
   const tools = array(body.tools).map(object)

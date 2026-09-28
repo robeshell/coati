@@ -1,0 +1,90 @@
+# Coati — Claude Code additions
+
+> **Main docs**: `AGENTS.md` (tool-agnostic project context: architecture, layering, naming, field type inference, anti-patterns, delivery process, menu tree) + `docs/architecture.md` (architecture: tech stack, cross-cutting conventions, migrations, deployment, design decisions). For features on the roadmap, first read the matching section of `docs/gateway/README.md`.
+> Read these two files before starting any implementation; for frontend UI work, also read `docs/frontend-design-system.md` (the shadcn/ui system). This file holds only what is specific to Claude Code.
+
+## Rules
+
+- Names are always lowercase and hyphenated (`castor-kit`, `@coati/api`), never camelCase
+- Before implementing a shadcn/ui component, check the official shadcn docs / registry first (use the shadcn MCP if available); add new primitives with `npx shadcn@latest add` (on this machine it has to go through a REGISTRY_URL relay, so run `apps/web/scripts/shadcn-add.sh <component>` directly; see AGENTS.md "Adding shadcn/ui primitives")
+- Migrations must actually be applied to the database and checked with `psql \d`; static checks don't count as done
+- **Code comments are always in English**; the UI supports Chinese / English / Japanese: in the frontend write `t('中文原文')` (the Chinese source text is the i18n key) and put translations in the page directory's `locales/en-US.json` and `ja-JP.json`; register translations for new backend errors in `apps/api/src/i18n/messages.ts` (see AGENTS.md "Internationalization (i18n) and code comments")
+
+---
+
+## Claude Code specifics
+
+### Skills
+
+- `/new-feature-autopilot` (`.claude/skills/new-feature-autopilot/SKILL.md`): use when a PM says "build feature XX / add an XX page". Flow:
+  1. Read AGENTS.md + docs/templates/
+  2. Infer the technical spec automatically as a spec JSON (don't ask the user about technical details) and check it with `pnpm scaffold -- --spec <file> --validate-only`
+  3. Show a **business preview** for confirmation
+  4. `pnpm scaffold -- --spec <file>` → fill in the business logic → incremental `seed-rbac` → `pnpm db:migrate` → prove it with `psql \d`
+  5. Once the `pnpm verify -- --module <name>` gate is all green (including frontend and backend unit tests), output the delivery report (stating "migrated to <tag>")
+- `shadcn-ui-skills` (`.claude/skills/shadcn-ui-skills/SKILL.md`): shadcn/ui component list, how to use castor-kit's shared components, design tokens, motion rules, common patterns and things not to do
+
+### Docs first
+
+- Before implementing a shadcn/ui component, check the official docs (https://ui.shadcn.com/docs/components ) or the registry (`apps/web/scripts/shadcn-add.sh --view <component>`); prefer the shadcn MCP when available
+- If the docs conflict with the existing implementation, the repo wins (`apps/web/src/components/ui/` has been adjusted to this project's tokens)
+
+### Local preview
+
+`.claude/launch.json` defines two dev servers, `api` (`pnpm --filter @coati/api dev`, 5004) and `web` (`pnpm --filter @coati/web dev`, 5175); start them from there when checking pages in the browser.
+
+---
+
+## Key conventions at a glance (details in AGENTS.md)
+
+### Backend (apps/api)
+- **Layering**: `db/schema/<domain>/<name>.ts` → `modules/<domain>/<name>/{schema,repository,service,routes}.ts` → `modules/<domain>/router.ts` → `src/router.ts`
+- **API route prefix**: `/api/admin/...`; list responses are `{ items, total, page, per_page }`, error responses are `{ error, ...payload }`
+- **Permission checks**: `import { hasMenuPermission, loginRequired } from '@/common/auth'`, `await hasMenuPermission(request, 'system_xxx')`; `hasAnyMenuPermission` / `menuPermissionRequired(code)` also exist
+  - Defining your own `hasPermission` inside a routes file is not allowed
+- **Model layer**: Drizzle `pgTable` + `xxxToDict()`; time columns use `createdAt()/updatedAt()` and are output with `toIso()` (ISO 8601 UTC, with `Z`); numeric stays a string
+- **New domain**: register it in `src/router.ts` + `db/schema/index.ts` (new modules inside an existing domain are registered by scaffold automatically)
+- **Import / export**: `common/tabular.ts` (`buildTable` / `sendTable` / `readTableFile`), csv / xlsx only
+
+### Frontend (apps/web, shadcn/ui + Tailwind CSS v4 + motion + lucide-react, TypeScript / TSX; see AGENTS.md "TypeScript")
+- **Dynamic routing**: `App.tsx` resolves pages via `lib/page-modules.ts` (`import.meta.glob('../modules/**/pages/**/index.tsx')`); `menu.component` values have the form `<module>/<subdir>/<page>` (e.g. `component_center/patterns/kanban_page`)
+- **API client**: `apps/web/src/shared/api/request.ts` (intercepts 401 and redirects to the login page, adds the CSRF header automatically, responses are already unwrapped)
+- **Page structure**: follow `apps/web/src/modules/admin/pages/users/index.tsx`: PageHeader → FilterBar → DataTable → FormDialog (react-hook-form + FormFields) → ImportDialog / ExportDialog; deletes use ConfirmAction, feedback uses `@/lib/toast`; other page patterns (cards, tree, stats, detail, steps, dynamic form, kanban, gantt, advanced table) copy their gallery page, see AGENTS.md "Page patterns (which page to copy)"; shared component usage: the gallery's Components pages
+- **Import / export**: reuse `@/shared/components/data-transfer/ImportDialog` + `@/shared/components/data-transfer/ExportDialog`
+- **Styling**: only Tailwind semantic color classes (`bg-card` / `text-muted-foreground` / `bg-brand-soft` ...); the Ocean gradient is only an accent; no hard-coded hex colors; only `@/components/ui/*`, `@/shared/components/*`, lucide-react and Tailwind semantic color classes, no other UI component libraries (antd, MUI, etc.)
+- **Frontend-only pages** (no backend CRUD API): devtools/websocket_page, devtools/perf_monitor_page, dataviz/heatmap_page, dataviz/realtime_chart_page
+
+### RBAC
+- Menu structure: `menus` table, `menu_type = 'menu'|'button'`; `role_menus` / `user_roles` are many-to-many
+- **Super admin**: code=`super_admin`, permission checks always pass (except `my-menus`)
+- Single source of truth: `apps/api/scripts/seed-rbac.ts`; after every menu / permission change you must run `pnpm seed:rbac -- --incremental`
+
+---
+
+## Common commands
+
+```bash
+pnpm dev                                   # api(5004) + web(5175)
+pnpm db:generate --name <description>      # generate a migration (note: no -- here)
+pnpm db:migrate                            # apply migrations
+psql -d coati_node_dev -c '\d <table>'          # prove it hit the DB (DB name from DEV_DATABASE_URL in apps/api/.env.development)
+pnpm seed:rbac -- --incremental            # incremental RBAC sync
+pnpm scaffold -- --spec <file> --validate-only   # check a spec, preview API / permissions / table / menu
+pnpm scaffold -- --spec <file>             # generate a module from a spec (--fields "name:str,…" without one)
+pnpm verify -- --module <name>             # feature verification gate (--skip-build skips the frontend build, --json for structured output)
+pnpm typecheck && pnpm test
+pnpm openapi:generate && pnpm openapi:apifox
+```
+
+---
+
+## New feature checklist
+
+1. [ ] Read the related existing modules (see `apps/api/src/modules/admin/users/`, `apps/web/src/modules/admin/pages/users/index.tsx`)
+2. [ ] Spec JSON (`docs/spec.schema.json`, examples in `docs/examples/specs/`) → `pnpm scaffold -- --spec <file> --validate-only` → `pnpm scaffold -- --spec <file>` (without a spec: `--name <name> --domain <admin|component_center> --fields "..."`)
+3. [ ] Backend: fill in the business logic in `db/schema` → `schema.ts` → `repository.ts` → `service.ts` → `routes.ts`
+4. [ ] Frontend: `pages/<subdir>/<page>/index.tsx` + `api/<page>.ts` (what scaffold generates; frontend-only pages need no api file): row type from the API file, `interface FormValues` + `useForm<FormValues>`, `DataTableColumn<Row>[]`, no `any` / casts (see AGENTS.md "TypeScript")
+5. [ ] RBAC: with a spec `menu` the menu + buttons are already in `seed-rbac.ts` (otherwise add them), run `pnpm seed:rbac -- --incremental`
+6. [ ] Migration: review the new SQL in `apps/api/drizzle/` → `pnpm db:migrate` → confirm with `psql \d`
+7. [ ] OpenAPI: scaffold has already written the module's endpoints; if you changed the generated routes / fields or added routes, update the doc following AGENTS.md "OpenAPI writing rules" until `pnpm openapi:generate -- --strict` passes
+8. [ ] Gate: `pnpm verify -- --module <name>` passes completely (including frontend and backend unit tests)

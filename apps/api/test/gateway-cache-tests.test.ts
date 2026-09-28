@@ -160,10 +160,10 @@ test('same requests traverse HTTP upstream and quota/usage accounting, preservin
   expect(
     (await admin.inject({ url: root + '/' + run.id })).json().results,
   ).toHaveLength(3)
-  const legacy = await admin.inject({url:'/api/admin/agent/cache-tests/'+run.id})
-  expect(legacy.statusCode).toBe(200)
-  expect(legacy.json().round_details).toHaveLength(3)
-  expect(legacy.json().summary).toMatchObject({rounds_total:3,rounds_ok:3})
+  const alternate = await admin.inject({url:'/api/admin/agent/cache-tests/'+run.id})
+  expect(alternate.statusCode).toBe(200)
+  expect(alternate.json().round_details).toHaveLength(3)
+  expect(alternate.json().summary).toMatchObject({rounds_total:3,rounds_ok:3})
   expect(safePayload(payload())).not.toContain(payload().prompt)
 })
 test('missing cache counters remain unknown and first failure preserves partial results', async () => {

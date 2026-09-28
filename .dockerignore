@@ -5,6 +5,5 @@
 **/.env.*
 **/instance
 **/coverage
-portal
 .coati*
 *.log

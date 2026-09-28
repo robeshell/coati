@@ -1,5 +1,5 @@
 /**
- * Coati feature verification gate
+ * castor-kit feature verification gate
  *
  * Usage:
  *   pnpm verify -- --module customer
@@ -7,24 +7,25 @@
  *   pnpm verify -- --module customer --json   # structured JSON output (for AI/MCP; stdout contains only JSON)
  *
  * Checks:
- *   1. TypeScript type check (tsc --noEmit: all of apps/api including scripts/test, plus apps/mcp)
+ *   1. TypeScript type check (tsc --noEmit: all of apps/api including scripts/test, apps/mcp and apps/web)
  *   2. routes layer must not define its own hasPermission (must use common/auth)
  *   3. Migration chain is intact (drizzle journal is linear, snapshot prevIds chain up, every entry has SQL, no stray SQL)
  *   4. Migrations are actually applied (journal compared against drizzle.__drizzle_migrations; module tables confirmed via to_regclass)
- *   5. OpenAPI docs in sync (warning; runs scripts/generate-openapi.ts --dry-run)
+ *   5. OpenAPI document follows AGENTS.md's rules (blocking; runs scripts/generate-openapi.ts --dry-run --strict)
  *   6. Paths referenced by AI context docs exist (warning; blocking with --strict-docs)
  *   7. Backend routes/repository/service files exist
+ *      + Data scope: a module whose schema.ts exports DATA_SCOPE must filter with dataScopeWhere in repository.ts
  *   8. Frontend page file exists
- *   9. Frontend page uses only the new shadcn/ui system (no @douyinfe/*, var(--semi-*) or retired legacy shared components in the page directory)
- *  10. Frontend API file exists
- *  11. Route registration (src/router.ts / modules/<domain>/router.ts)
- *  12. Table definition registration (db/schema/index.ts)
- *  13. RBAC seed (scripts/seed-rbac.ts) contains the menu component or permission code
- *  14. Frontend build passes (optional, skip with --skip-build)
- *  15. Frontend Vitest passes (optional, skip with --skip-frontend-tests)
- *  16. Backend Vitest passes (optional, skip with --skip-api-tests; ~45s, needs the test DB)
+ *   9. Frontend API file exists
+ *  10. Route registration (src/router.ts / modules/<domain>/router.ts)
+ *  11. Table definition registration (db/schema/index.ts)
+ *  12. RBAC seed (scripts/seed-rbac.ts) contains the menu component or permission code
+ *  13. Frontend build passes (optional, skip with --skip-build)
+ *  14. Frontend Vitest passes (optional, skip with --skip-frontend-tests)
+ *  15. Backend Vitest passes (optional, skip with --skip-api-tests; ~45s, needs the test DB)
  *
- * JSON output shape: { passed, module, checks: [{ name, passed, error?, skipped?, warn?, detail? }], summary }
+ * JSON output shape: { passed, complete, module, checks: [{ name, passed, error?, skipped?, byFlag?, warn?, detail? }], summary }
+ * (complete: no check was skipped by a --skip-* flag; byFlag: the flag that skipped the check)
  */
 
 import { spawnSync, type SpawnSyncOptions } from 'node:child_process'
@@ -45,6 +46,8 @@ export interface CheckResult {
   skipped?: boolean
   warn?: boolean
   detail?: string
+  /** The --skip-* flag that skipped this check (unlike a check that doesn't apply to the module) */
+  byFlag?: string
   [extra: string]: unknown
 }
 
@@ -103,7 +106,7 @@ const toPascal = (name: string) =>
     .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1).toLowerCase() : ''))
     .join('')
 
-/** Candidate spellings of the module name: customer / customers / customer_page / list_page → list */
+/** Candidate spellings of the module name: customer / customers / customer_page / invoice_page → invoice */
 export function moduleCandidates(module: string): string[] {
   const singular = singularOf(module)
   const names = [module, singular, `${module}_page`, `${singular}_page`]
@@ -116,13 +119,19 @@ const WEB_MODULES = ['admin', 'component_center']
 
 // ─── Individual checks ─────────────────────────────────────────────────────────
 
-/** TypeScript type check (all of apps/api + apps/mcp) */
+/** Type-checks each package's tsconfig.json (apps/api, apps/mcp, apps/web), plus apps/web's tsconfig.test.json (its tests and Vite / Vitest configs) */
 export function checkTypescript(ctx: VerifyContext): CheckResult {
   const errors: string[] = []
-  for (const pkg of [ctx.apiDir, join(ctx.root, 'apps', 'mcp')]) {
-    if (!existsSync(join(pkg, 'tsconfig.json'))) continue
-    const { code, output } = run([...bin(pkg, 'tsc'), '--noEmit', '-p', 'tsconfig.json'], pkg)
-    if (code !== 0) errors.push(`[${rel(ctx, pkg)}]\n${output.trim()}`)
+  const projects: [pkg: string, config: string][] = [
+    [ctx.apiDir, 'tsconfig.json'],
+    [join(ctx.root, 'apps', 'mcp'), 'tsconfig.json'],
+    [ctx.webDir, 'tsconfig.json'],
+    [ctx.webDir, 'tsconfig.test.json'],
+  ]
+  for (const [pkg, config] of projects) {
+    if (!existsSync(join(pkg, config))) continue
+    const { code, output } = run([...bin(pkg, 'tsc'), '--noEmit', '-p', config], pkg)
+    if (code !== 0) errors.push(`[${rel(ctx, join(pkg, config))}]\n${output.trim()}`)
   }
   if (errors.length > 0) return { name: 'typescript_compile', passed: false, error: errors.join('\n').slice(0, 2000) }
   return { name: 'typescript_compile', passed: true }
@@ -139,7 +148,7 @@ export function checkNoLocalHasPermission(ctx: VerifyContext): CheckResult {
     return {
       name: 'no_local_has_permission',
       passed: false,
-      error: `以下文件含有非法的 hasPermission 定义（应使用 src/common/auth.ts）：${JSON.stringify(offenders)}`,
+      error: `These files define their own hasPermission (import it from src/common/auth.ts instead): ${JSON.stringify(offenders)}`,
     }
   }
   return { name: 'no_local_has_permission', passed: true }
@@ -164,7 +173,7 @@ export function checkMigrationChain(ctx: VerifyContext): CheckResult {
   try {
     entries = (JSON.parse(readFileSync(journalPath, 'utf8')) as { entries?: JournalEntry[] }).entries ?? []
   } catch (err) {
-    return { name: 'migration_chain', passed: false, error: `_journal.json 解析失败：${(err as Error).message}` }
+    return { name: 'migration_chain', passed: false, error: `Could not parse _journal.json: ${(err as Error).message}` }
   }
   if (entries.length === 0) return { name: 'migration_chain', passed: true, skipped: true }
 
@@ -172,28 +181,28 @@ export function checkMigrationChain(ctx: VerifyContext): CheckResult {
   const tags = new Set<string>()
   let prevSnapshotId: string | null = null
   entries.forEach((e, i) => {
-    if (e.idx !== i) details.push(`第 ${i} 条的 idx=${e.idx}（应为 ${i}，journal 顺序被打乱或有缺号）`)
+    if (e.idx !== i) details.push(`entry ${i} has idx=${e.idx} (expected ${i}; the journal is out of order or has a gap)`)
     if (i > 0 && !(e.when > entries[i - 1]!.when)) {
-      details.push(`${e.tag} 的 when 不大于上一条（迁移器按时间戳判断是否已执行，会被跳过）`)
+      details.push(`${e.tag}: when is not later than the previous entry's (the migrator compares timestamps, so it would be skipped)`)
     }
-    if (tags.has(e.tag)) details.push(`tag 重复：${e.tag}`)
+    if (tags.has(e.tag)) details.push(`duplicate tag: ${e.tag}`)
     tags.add(e.tag)
-    if (!existsSync(join(dir, `${e.tag}.sql`))) details.push(`缺少 SQL 文件：drizzle/${e.tag}.sql`)
+    if (!existsSync(join(dir, `${e.tag}.sql`))) details.push(`missing SQL file: drizzle/${e.tag}.sql`)
 
     const snapshotPath = join(dir, 'meta', `${String(e.idx).padStart(4, '0')}_snapshot.json`)
     if (!existsSync(snapshotPath)) {
-      details.push(`缺少 snapshot：drizzle/meta/${String(e.idx).padStart(4, '0')}_snapshot.json`)
+      details.push(`missing snapshot: drizzle/meta/${String(e.idx).padStart(4, '0')}_snapshot.json`)
       prevSnapshotId = null
       return
     }
     try {
       const snap = JSON.parse(readFileSync(snapshotPath, 'utf8')) as { id?: string; prevId?: string }
       if (i > 0 && prevSnapshotId && snap.prevId !== prevSnapshotId) {
-        details.push(`${e.tag} 的 snapshot.prevId 不指向上一条（存在分叉：多个迁移基于同一祖先生成）`)
+        details.push(`${e.tag}: snapshot.prevId does not point to the previous entry (the chain forks: several migrations were generated from the same parent)`)
       }
       prevSnapshotId = snap.id ?? null
     } catch {
-      details.push(`snapshot 解析失败：${e.tag}`)
+      details.push(`could not parse the snapshot of ${e.tag}`)
       prevSnapshotId = null
     }
   })
@@ -202,10 +211,10 @@ export function checkMigrationChain(ctx: VerifyContext): CheckResult {
     .filter((f) => f.endsWith('.sql') && !tags.has(f.slice(0, -4)))
     .sort()
   if (orphans.length > 0) {
-    details.push(`drizzle/ 下有未登记到 journal 的 SQL（手写迁移会破坏 journal 链，请用 drizzle-kit generate）：${JSON.stringify(orphans)}`)
+    details.push(`SQL files in drizzle/ that are not in the journal (hand-written migrations break the chain; use drizzle-kit generate): ${JSON.stringify(orphans)}`)
   }
 
-  if (details.length > 0) return { name: 'migration_chain', passed: false, error: `迁移链异常：${details.join('；')}` }
+  if (details.length > 0) return { name: 'migration_chain', passed: false, error: `Broken migration chain: ${details.join('; ')}` }
   return { name: 'migration_chain', passed: true, head: entries[entries.length - 1]!.tag }
 }
 
@@ -239,13 +248,13 @@ export async function checkMigrationApplied(
   const name = 'migration_applied'
   const folder = join(ctx.apiDir, 'drizzle')
   if (!existsSync(join(folder, 'meta', '_journal.json'))) return { name, passed: true, skipped: true }
-  if (!databaseUrl) return { name, passed: false, error: '未配置数据库连接（DEV_DATABASE_URL / DATABASE_URL / TEST_DATABASE_URL），无法确认迁移是否落库' }
+  if (!databaseUrl) return { name, passed: false, error: 'No database connection configured (DEV_DATABASE_URL / DATABASE_URL / TEST_DATABASE_URL), so the migrations cannot be confirmed' }
 
   let migrations
   try {
     migrations = readMigrationFiles({ migrationsFolder: folder })
   } catch (err) {
-    return { name, passed: false, error: `读取迁移文件失败：${(err as Error).message}` }
+    return { name, passed: false, error: `Could not read the migration files: ${(err as Error).message}` }
   }
   const journal = (JSON.parse(readFileSync(join(folder, 'meta', '_journal.json'), 'utf8')) as { entries: JournalEntry[] }).entries
   const database = databaseUrl.replace(/^.*\//, '').replace(/\?.*$/, '')
@@ -254,7 +263,7 @@ export async function checkMigrationApplied(
   try {
     const { rows: reg } = await pool.query<{ t: string | null }>(`SELECT to_regclass('drizzle.__drizzle_migrations')::text AS t`)
     if (!reg[0]?.t) {
-      return { name, passed: false, error: `数据库 ${database} 尚未执行任何迁移（drizzle.__drizzle_migrations 不存在），请运行 pnpm db:migrate` }
+      return { name, passed: false, error: `No migrations have been applied to ${database} (drizzle.__drizzle_migrations does not exist); run pnpm db:migrate` }
     }
     const { rows } = await pool.query<{ hash: string }>('SELECT hash FROM drizzle.__drizzle_migrations')
     const applied = new Set(rows.map((r) => r.hash))
@@ -264,8 +273,8 @@ export async function checkMigrationApplied(
         name,
         passed: false,
         error:
-          `以下迁移尚未落库到 ${database}（或 SQL 在落库后被修改）：${pending.map((p) => p.tag).join(', ')}；` +
-          '请运行 pnpm db:migrate，并用 psql \\d <table> 确认',
+          `Migrations not applied to ${database} (or their SQL changed after they were applied): ${pending.map((p) => p.tag).join(', ')}; ` +
+          'run pnpm db:migrate and confirm with psql \\d <table>',
       }
     }
 
@@ -279,66 +288,48 @@ export async function checkMigrationApplied(
           if (!r[0]?.t) missing.push(table)
         }
         if (missing.length > 0) {
-          return { name, passed: false, error: `数据库 ${database} 中不存在表：${missing.join(', ')}（schema 已定义但没有生成/执行迁移）` }
+          return { name, passed: false, error: `Database ${database} is missing tables: ${missing.join(', ')} (defined in the schema, but no migration was generated or applied)` }
         }
         result.tables = found.tables
       }
     }
-    result.detail = `已迁移至 ${result.head}（${database}）`
+    result.detail = `migrated to ${result.head} (${database})`
     return result
   } catch (err) {
-    return { name, passed: false, error: `连接数据库 ${database} 失败：${(err as Error).message}` }
+    return { name, passed: false, error: `Could not connect to database ${database}: ${(err as Error).message}` }
   } finally {
     await pool.end().catch(() => {})
   }
 }
 
 /**
- * OpenAPI docs sync (warning only, does not block the gate): runs generate-openapi.ts --dry-run (counts only, no write-back);
- * warns when there are undocumented routes, or detailed path coverage < 80% (skeleton paths not counted).
+ * OpenAPI document (blocks the gate): runs generate-openapi.ts --dry-run --strict, which checks every registered /api
+ * route against AGENTS.md's OpenAPI rules (scripts/lib/openapi-lint.ts). Operations of the module being verified are
+ * listed first.
  */
-export function checkOpenapiSync(ctx: VerifyContext): CheckResult {
+export function checkOpenapiSync(ctx: VerifyContext, module?: string): CheckResult {
   const name = 'openapi_sync'
   const script = join(ctx.apiDir, 'scripts', 'generate-openapi.ts')
   const docPath = join(ctx.root, 'docs', 'apifox-full.openapi.json')
   if (!existsSync(script) || !existsSync(docPath)) return { name, passed: true, skipped: true }
 
-  const { code, output } = run([...bin(ctx.apiDir, 'tsx'), 'scripts/generate-openapi.ts', '--dry-run'], ctx.apiDir, 180_000)
-  if (code !== 0) {
-    return { name, passed: true, warn: true, detail: `OpenAPI 生成脚本执行失败：${output.trim().slice(-500)}` }
+  const { code, output } = run([...bin(ctx.apiDir, 'tsx'), 'scripts/generate-openapi.ts', '--dry-run', '--strict'], ctx.apiDir, 180_000)
+  if (code === 0) return { name, passed: true }
+  const failing = /Docs check: (\d+) endpoints? do(?:es)? not follow the rules/.exec(output)?.[1]
+  if (!failing) return { name, passed: false, error: `The OpenAPI generation script failed: ${output.trim().slice(-500)}` }
+
+  const ops = output.split('\n').filter((l) => /^(GET|POST|PUT|PATCH|DELETE) \/api\//.test(l))
+  const slug = module?.replace(/_/g, '-')
+  const mine = slug ? ops.filter((l) => l.includes(`/${slug}`)) : []
+  const shown = [...mine, ...ops.filter((l) => !mine.includes(l))].slice(0, 10)
+  return {
+    name,
+    passed: false,
+    error:
+      `${failing} ${failing === '1' ? 'endpoint has' : 'endpoints have'} OpenAPI docs that do not follow AGENTS.md "OpenAPI writing rules"${mine.length ? ` (${mine.length} in this module)` : ''}: ` +
+      `${shown.join('; ')}${ops.length > shown.length ? '; ...' : ''}. ` +
+      'Run pnpm openapi:generate to add stubs, fill them in per the rules, then run pnpm openapi:generate -- --strict to see what is wrong with each endpoint',
   }
-  const routes = Number(/收集到 \/api 路由 (\d+) 条/.exec(output)?.[1] ?? Number.NaN)
-  const added = Number(/补齐 (\d+) 个路径/.exec(output)?.[1] ?? Number.NaN)
-  const detailed = Number(/详细 (\d+)/.exec(output)?.[1] ?? Number.NaN)
-  if ([routes, added, detailed].some(Number.isNaN)) {
-    return { name, passed: true, warn: true, detail: `无法解析 OpenAPI 生成脚本输出：${output.trim().slice(-300)}` }
-  }
-  if (added > 0) {
-    const lines = output
-      .split('\n')
-      .filter((l) => /^\s+\+ /.test(l))
-      .map((l) => l.trim().slice(2))
-    return {
-      name,
-      passed: true,
-      warn: true,
-      detail:
-        `OpenAPI 文档缺少 ${added} 个路由路径（${lines.slice(0, 10).join('；')}${lines.length > 10 ? '…' : ''}），` +
-        '建议运行 pnpm openapi:generate 补齐并补充 schema',
-    }
-  }
-  const ratio = routes ? (detailed / routes) * 100 : 0
-  if (ratio < 80) {
-    return {
-      name,
-      passed: true,
-      warn: true,
-      detail:
-        `OpenAPI 详细路径 ${detailed} vs 后端路由 ${routes}（覆盖率 ${Math.round(ratio)}%），` +
-        '建议运行 pnpm openapi:generate 补齐并补充 schema',
-    }
-  }
-  return { name, passed: true }
 }
 
 /** Repo paths referenced in AI context docs (AGENTS.md / CLAUDE.md / ...) via `backticks` or relative links must exist */
@@ -347,16 +338,13 @@ export function checkDocPaths(ctx: VerifyContext, strict = false): CheckResult {
   const docs = [
     'AGENTS.md',
     'CLAUDE.md',
-    'CODEX.md',
     'README.md',
-    'README.en.md',
-    'llms.txt',
-    '.windsurfrules',
-    '.github/copilot-instructions.md',
+    'README.zh-CN.md',
+    'README.ja.md',
   ]
     .map((f) => join(ctx.root, f))
     .filter((p) => existsSync(p))
-  for (const dir of ['.cursor', '.claude/skills', '.agents']) {
+  for (const dir of ['.claude/skills', '.agents']) {
     docs.push(...walk(join(ctx.root, dir), (p) => /\.(md|mdc)$/.test(p)))
   }
   docs.push(...walk(join(ctx.root, 'docs', 'templates'), (p) => p.endsWith('README.md')))
@@ -385,7 +373,7 @@ export function checkDocPaths(ctx: VerifyContext, strict = false): CheckResult {
     }
   }
   if (missing.length === 0) return { name, passed: true, checked: checked.size }
-  const detail = `文档引用的路径不存在（${missing.length} 处）：${missing.slice(0, 20).join('；')}`
+  const detail = `Paths referenced in the docs do not exist (${missing.length}): ${missing.slice(0, 20).join('; ')}`
   return strict ? { name, passed: false, error: detail } : { name, passed: true, warn: true, detail }
 }
 
@@ -412,7 +400,7 @@ export function checkBackendFile(ctx: VerifyContext, module: string): CheckResul
     return {
       name: 'backend_file',
       passed: false,
-      error: `未找到后端 routes.ts，检查路径：${candidates.slice(0, 4).map((d) => rel(ctx, join(d, 'routes.ts'))).join(', ')}`,
+      error: `No backend routes.ts found; looked in: ${candidates.slice(0, 4).map((d) => rel(ctx, join(d, 'routes.ts'))).join(', ')}`,
     }
   }
   const missing = ['repository.ts', 'service.ts'].filter((f) => !existsSync(join(found, f)))
@@ -420,19 +408,19 @@ export function checkBackendFile(ctx: VerifyContext, module: string): CheckResul
     return {
       name: 'backend_file',
       passed: false,
-      error: `${rel(ctx, found)} 缺少 ${missing.join(' / ')}（分层：schema → repository → service → routes）`,
+      error: `${rel(ctx, found)} is missing ${missing.join(' / ')} (layers: schema → repository → service → routes)`,
     }
   }
   return { name: 'backend_file', passed: true, path: rel(ctx, found) }
 }
 
-/** Frontend page index.jsx exists */
+/** Frontend page index.tsx exists */
 export function checkFrontendPage(ctx: VerifyContext, module: string): CheckResult {
   const singular = singularOf(module)
   const names = new Set([module, singular, `${module}_page`, `${singular}_page`])
   for (const m of WEB_MODULES) {
     const base = join(ctx.webDir, 'src', 'modules', m, 'pages')
-    const hit = walk(base, (p) => p.endsWith('/index.jsx') || p.endsWith('/index.tsx')).find((p) =>
+    const hit = walk(base, (p) => p.endsWith('/index.tsx')).find((p) =>
       names.has(dirname(p).slice(dirname(p).lastIndexOf('/') + 1)),
     )
     if (hit) return { name: 'frontend_page', passed: true, path: rel(ctx, hit) }
@@ -440,67 +428,27 @@ export function checkFrontendPage(ctx: VerifyContext, module: string): CheckResu
   return {
     name: 'frontend_page',
     passed: false,
-    error: `未找到前端页面文件 index.jsx，目录名应为 ${module} 或 ${singular} 或 ${module}_page`,
+    error: `No frontend page index.tsx found; its directory should be named ${module}, ${singular} or ${module}_page`,
   }
-}
-
-/**
- * Leftover patterns from the old UI system (the frontend moved from Semi Design to shadcn/ui + Tailwind v4 per docs/frontend-redesign-plan.md).
- * These dependencies / files are deleted when the migration wraps up; a hit means a build failure or broken styles, so it's treated as a failure rather than a warning.
- */
-export const LEGACY_UI_PATTERNS: { re: RegExp; hint: string }[] = [
-  { re: /(?:from|import|require)\s*\(?\s*['"]@douyinfe\//, hint: '导入 @douyinfe/*（改用 @/components/ui/* 与 @/shared/components/*，图标用 lucide-react）' },
-  { re: /var\(--semi-/, hint: '使用 var(--semi-*)（改用 Tailwind 语义色类，如 bg-card / text-muted-foreground / border）' },
-  {
-    re: /['"]@\/shared\/(components\/import-export\/|components\/upload\/(File|Image)UploadField|styles(\.js)?['"])/,
-    hint: '引用已下线的旧公共组件（改用 data-transfer/ImportDialog、ExportDialog 与 upload/FileUpload、ImageUpload）',
-  },
-]
-
-/** The frontend page directory (index.jsx plus co-located local components / styles) must not use the old UI system; skipped when the page doesn't exist (frontend_page already reported it) */
-export function checkFrontendNoLegacyUi(ctx: VerifyContext, module: string): CheckResult {
-  const name = 'frontend_no_legacy_ui'
-  const page = checkFrontendPage(ctx, module)
-  if (!page.passed || typeof page.path !== 'string') return { name, passed: true, skipped: true }
-  const dir = dirname(join(ctx.root, page.path))
-  const offenders: string[] = []
-  for (const file of walk(dir, (p) => /\.(jsx?|tsx?|css)$/.test(p))) {
-    const lines = readFileSync(file, 'utf8').split('\n')
-    lines.forEach((line, i) => {
-      for (const { re, hint } of LEGACY_UI_PATTERNS) {
-        if (re.test(line)) offenders.push(`${rel(ctx, file)}:${i + 1} ${hint}`)
-      }
-    })
-  }
-  if (offenders.length > 0) {
-    return {
-      name,
-      passed: false,
-      error:
-        `前端页面仍在使用旧 UI 体系（Semi Design 已下线，见 docs/frontend-redesign-plan.md）：` +
-        `${offenders.slice(0, 10).join('；')}${offenders.length > 10 ? `；…共 ${offenders.length} 处` : ''}`,
-    }
-  }
-  return { name, passed: true, path: rel(ctx, dir) }
 }
 
 /** Frontend API file exists */
 export function checkFrontendApi(ctx: VerifyContext, module: string): CheckResult {
   const singular = singularOf(module)
   const api = (m: string, f: string) => join(ctx.webDir, 'src', 'modules', m, 'api', f)
-  const candidates = [
-    api('admin', `${module}.js`),
-    api('admin', `${singular}.js`),
-    api('component_center', `${module}.js`),
-    api('component_center', `${singular}.js`),
-    api('component_center', `${module}_page.js`),
+  const bases = [
+    api('admin', module),
+    api('admin', singular),
+    api('component_center', module),
+    api('component_center', singular),
+    api('component_center', `${module}_page`),
   ]
-  const found = candidates.find((p) => existsSync(p))
+  const found = bases.map((base) => `${base}.ts`).find((p) => existsSync(p))
   if (found) return { name: 'frontend_api', passed: true, path: rel(ctx, found) }
   return {
     name: 'frontend_api',
     passed: false,
-    error: `未找到前端 API 文件，检查路径：${candidates.slice(0, 3).map((p) => rel(ctx, p)).join(', ')}`,
+    error: `No frontend API file found; looked in: ${[...new Set(bases)].slice(0, 3).map((p) => `${rel(ctx, p)}.ts`).join(', ')}`,
   }
 }
 
@@ -522,8 +470,8 @@ export function checkRouterRegistration(ctx: VerifyContext, module: string): Che
     name: 'router_registration',
     passed: false,
     error:
-      `router 中未注册 register${toPascal(module)}Routes / register${toPascal(singularOf(module))}Routes；` +
-      `已注册: ${all.length > 0 ? JSON.stringify(all) : '无'}。请在 src/modules/<domain>/router.ts 中调用`,
+      `No router calls register${toPascal(module)}Routes / register${toPascal(singularOf(module))}Routes; ` +
+      `registered: ${all.length > 0 ? JSON.stringify(all) : 'none'}. Call it in src/modules/<domain>/router.ts`,
   }
 }
 
@@ -532,7 +480,7 @@ export function checkSchemaRegistration(ctx: VerifyContext, module: string): Che
   const name = 'schema_registration'
   const found = findModuleTables(ctx, module)
   if (!found) {
-    return { name, passed: true, skipped: true, detail: `未找到 ${module} 对应的表定义文件（模块可能没有自己的表），跳过` }
+    return { name, passed: true, skipped: true, detail: `No table definition file found for ${module} (the module may have no tables of its own); skipped` }
   }
   const indexPath = join(ctx.srcDir, 'db', 'schema', 'index.ts')
   const spec = `./${relative(join(ctx.srcDir, 'db', 'schema'), found.file).replace(/\.ts$/, '')}`
@@ -542,14 +490,14 @@ export function checkSchemaRegistration(ctx: VerifyContext, module: string): Che
   return {
     name,
     passed: false,
-    error: `${rel(ctx, found.file)} 未在 src/db/schema/index.ts 导出，请添加 export * from '${spec}'`,
+    error: `${rel(ctx, found.file)} is not exported from src/db/schema/index.ts; add export * from '${spec}'`,
   }
 }
 
 /** RBAC seed: the menu data must contain the matching component path or permission code (exact match) */
 export function checkRbacSeed(ctx: VerifyContext, module: string): CheckResult {
   const seedFile = join(ctx.apiDir, 'scripts', 'seed-rbac.ts')
-  if (!existsSync(seedFile)) return { name: 'rbac_seed', passed: false, error: 'scripts/seed-rbac.ts 不存在' }
+  if (!existsSync(seedFile)) return { name: 'rbac_seed', passed: false, error: 'scripts/seed-rbac.ts does not exist' }
 
   // seed-rbac.ts and the data files it imports relatively
   const files = [seedFile]
@@ -573,8 +521,8 @@ export function checkRbacSeed(ctx: VerifyContext, module: string): CheckResult {
     name: 'rbac_seed',
     passed: false,
     error:
-      `种子数据中未找到 ${module} 的菜单（component 路径或 system_${module} / cc_${module} 权限码），` +
-      '请在 scripts/seed-rbac.ts 添加菜单/按钮后运行 pnpm seed:rbac -- --incremental',
+      `No menu for ${module} in the seed data (neither a component path nor a system_${module} / cc_${module} permission code); ` +
+      'add the menu and buttons to scripts/seed-rbac.ts, then run pnpm seed:rbac -- --incremental',
   }
 }
 
@@ -586,15 +534,15 @@ export function runRbacSync(ctx: VerifyContext): CheckResult {
 
 /** Frontend build (vite build) */
 export function checkFrontendBuild(ctx: VerifyContext, skip: boolean): CheckResult {
-  if (skip) return { name: 'frontend_build', passed: true, skipped: true }
+  if (skip) return { name: 'frontend_build', passed: true, skipped: true, byFlag: '--skip-build' }
   const { code, output } = run([...bin(ctx.webDir, 'vite'), 'build'], ctx.webDir)
   if (code !== 0) return { name: 'frontend_build', passed: false, error: output.slice(-1000) }
   return { name: 'frontend_build', passed: true }
 }
 
-/** Frontend Vitest tests (including the @ alias import integrity regression) */
+/** Frontend Vitest tests */
 export function checkFrontendTests(ctx: VerifyContext, skip: boolean): CheckResult {
-  if (skip) return { name: 'frontend_tests', passed: true, skipped: true }
+  if (skip) return { name: 'frontend_tests', passed: true, skipped: true, byFlag: '--skip-frontend-tests' }
   const { code, output } = run([...bin(ctx.webDir, 'vitest'), 'run'], ctx.webDir)
   if (code !== 0) return { name: 'frontend_tests', passed: false, error: output.slice(-1000) }
   return { name: 'frontend_tests', passed: true }
@@ -602,7 +550,7 @@ export function checkFrontendTests(ctx: VerifyContext, skip: boolean): CheckResu
 
 /** Backend unit tests: new features often change seed / migration related tests, so the gate must cover them */
 export function checkApiTests(ctx: VerifyContext, skip: boolean): CheckResult {
-  if (skip) return { name: 'api_tests', passed: true, skipped: true }
+  if (skip) return { name: 'api_tests', passed: true, skipped: true, byFlag: '--skip-api-tests' }
   const { code, output } = run([...bin(ctx.apiDir, 'vitest'), 'run'], ctx.apiDir)
   if (code !== 0) return { name: 'api_tests', passed: false, error: output.slice(-1500) }
   return { name: 'api_tests', passed: true }
@@ -625,6 +573,8 @@ export interface VerifyOptions {
 
 export interface VerifyReport {
   passed: boolean
+  /** No check was skipped by a --skip-* flag (only a complete, passing run means the feature is ready to deliver) */
+  complete: boolean
   module: string | null
   checks: CheckResult[]
   summary: string
@@ -647,6 +597,31 @@ export async function resolveDatabaseUrl(ctx: VerifyContext): Promise<string | n
   }
 }
 
+/**
+ * Modules that declare data scope (`export const DATA_SCOPE` in schema.ts) must filter their queries with
+ * dataScopeWhere in repository.ts; modules without the declaration are skipped.
+ */
+export function checkDataScopeFilter(ctx: VerifyContext, module: string): CheckResult {
+  const name = 'data_scope_filter'
+  const dir = BACKEND_DOMAINS.flatMap((d) => moduleCandidates(module).map((n) => join(ctx.srcDir, 'modules', d, toKebab(n)))).find(
+    (candidate) => existsSync(join(candidate, 'routes.ts')),
+  )
+  const schemaPath = dir ? join(dir, 'schema.ts') : ''
+  if (!dir || !existsSync(schemaPath) || !/export const DATA_SCOPE\b/.test(readFileSync(schemaPath, 'utf8'))) {
+    return { name, passed: true, skipped: true, detail: 'The module declares no data scope (schema.ts has no DATA_SCOPE)' }
+  }
+  const repoPath = join(dir, 'repository.ts')
+  const repo = existsSync(repoPath) ? readFileSync(repoPath, 'utf8') : ''
+  if (!/\bdataScopeWhere\(/.test(repo)) {
+    return {
+      name,
+      passed: false,
+      error: `${rel(ctx, schemaPath)} declares DATA_SCOPE, but ${rel(ctx, repoPath)} does not filter its queries with dataScopeWhere (see src/common/data-scope.ts)`,
+    }
+  }
+  return { name, passed: true, detail: `${rel(ctx, repoPath)} filters by data scope` }
+}
+
 export async function verify(options: VerifyOptions = {}): Promise<VerifyReport> {
   const ctx = makeContext(options.root)
   const progress = options.progress ?? (() => {})
@@ -663,21 +638,21 @@ export async function verify(options: VerifyOptions = {}): Promise<VerifyReport>
   step('no_local_has_permission', () => checkNoLocalHasPermission(ctx))
   step('migration_chain', () => checkMigrationChain(ctx))
   if (options.skipDb) {
-    results.push({ name: 'migration_applied', passed: true, skipped: true })
+    results.push({ name: 'migration_applied', passed: true, skipped: true, byFlag: '--skip-db' })
   } else {
     progress('… migration_applied')
     const url = options.databaseUrl !== undefined ? options.databaseUrl : await resolveDatabaseUrl(ctx)
     results.push(await checkMigrationApplied(ctx, options.module, url))
   }
-  step('openapi_sync', () => checkOpenapiSync(ctx))
+  step('openapi_sync', () => checkOpenapiSync(ctx, options.module))
   step('docs_paths', () => checkDocPaths(ctx, options.strictDocs))
 
   // Module-level checks
   if (options.module) {
     const m = options.module
     step('backend_file', () => checkBackendFile(ctx, m))
+    step('data_scope_filter', () => checkDataScopeFilter(ctx, m))
     step('frontend_page', () => checkFrontendPage(ctx, m))
-    step('frontend_no_legacy_ui', () => checkFrontendNoLegacyUi(ctx, m))
     step('frontend_api', () => checkFrontendApi(ctx, m))
     step('router_registration', () => checkRouterRegistration(ctx, m))
     step('schema_registration', () => checkSchemaRegistration(ctx, m))
@@ -694,26 +669,46 @@ export async function verify(options: VerifyOptions = {}): Promise<VerifyReport>
 
   // Summary
   const passed = results.every((r) => r.passed)
-  const failures = results.filter((r) => !r.passed && !r.skipped)
   return {
     passed,
+    complete: !results.some((r) => r.byFlag),
     module: options.module ?? null,
     checks: results,
-    summary: `${results.length - failures.length}/${results.length} 项通过`,
+    summary: summarize(results),
   }
 }
 
+/** "13 passed, 3 skipped" / "8 passed, 3 skipped, 5 failed" */
+function summarize(results: CheckResult[]): string {
+  const failed = results.filter((r) => !r.passed && !r.skipped).length
+  const skipped = results.filter((r) => r.skipped).length
+  const parts = [`${results.length - failed - skipped} passed`]
+  if (skipped > 0) parts.push(`${skipped} skipped`)
+  if (failed > 0) parts.push(`${failed} failed`)
+  return parts.join(', ')
+}
+
 export function formatHuman(report: VerifyReport): string {
-  const lines = ['== Coati 功能验证 ==', '']
+  const lines = ['== castor-kit feature verification ==', '']
   for (const r of report.checks) {
     const icon = r.passed ? (r.skipped ? '⏭️ ' : '✅') : r.skipped ? '⏭️ ' : '❌'
-    lines.push(`  ${icon} ${r.name.replace(/_/g, ' ')}`)
+    lines.push(`  ${icon} ${r.name.replace(/_/g, ' ')}${r.byFlag ? ` (${r.byFlag})` : ''}`)
     if (!r.passed && !r.skipped && r.error) lines.push(`      → ${r.error}`)
     else if (r.warn && r.detail) lines.push(`      ⚠️ ${r.detail}`)
+    // e.g. migration applied → "migrated to 0002_device (castor_kit)", which the delivery report quotes
+    else if (r.detail) lines.push(`      ${r.detail}`)
   }
   lines.push('')
   const failures = report.checks.filter((r) => !r.passed && !r.skipped)
-  lines.push(report.passed ? '✅ 全部检查通过，功能可交付！' : `❌ ${failures.length} 项检查未通过，请修复后重新验证。`)
+  const byFlag = report.checks.filter((r) => r.byFlag)
+  if (!report.passed) {
+    lines.push(`❌ ${failures.length} ${failures.length === 1 ? 'check' : 'checks'} failed. Fix ${failures.length === 1 ? 'it' : 'them'} and run verify again.`)
+  } else if (!report.complete) {
+    const flags = [...new Set(byFlag.map((r) => r.byFlag))].join(' ')
+    lines.push(`✅ The checks that ran passed, but ${byFlag.length} ${byFlag.length === 1 ? 'was' : 'were'} skipped (${flags}). Run verify without these flags before delivering.`)
+  } else {
+    lines.push('✅ All checks passed. The feature is ready to deliver.')
+  }
   return lines.join('\n')
 }
 

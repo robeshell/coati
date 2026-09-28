@@ -6,7 +6,7 @@
 
 import { relations } from 'drizzle-orm'
 import { boolean, foreignKey, index, integer, pgTable, serial, text, timestamp, unique, varchar } from 'drizzle-orm/pg-core'
-import { pyStr } from '@/common/py'
+import { inputText } from '@/common/input-coercion'
 import { toIso } from '@/common/serialize'
 import { createdAt, updatedAt } from '../columns'
 
@@ -84,7 +84,7 @@ function parseJsonUrlList(raw: string | null): string[] {
   if (!raw) return []
   try {
     const parsed: unknown = JSON.parse(raw)
-    if (Array.isArray(parsed)) return parsed.map((v) => pyStr(v).trim()).filter(Boolean)
+    if (Array.isArray(parsed)) return parsed.map((v) => inputText(v).trim()).filter(Boolean)
   } catch {
     return []
   }

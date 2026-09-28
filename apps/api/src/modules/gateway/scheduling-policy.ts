@@ -12,7 +12,7 @@ export function schedulingPolicy(env: Record<string, string | undefined> = proce
     if (!Number.isSafeInteger(value)) throw new Error(`${key} must be an integer`)
     return zeroFallback && value === 0 ? fallback : value
   }
-  // Python's candidate-window parser deliberately falls back for malformed values.
+  // The gateway's candidate-window parser deliberately falls back for malformed values.
   const pool = Number(env.AGENT_GATEWAY_SELECTION_POOL_SIZE || 7)
   return {
     selectionPoolSize: Math.min(50, Math.max(1, Number.isSafeInteger(pool) && pool !== 0 ? pool : 7)),

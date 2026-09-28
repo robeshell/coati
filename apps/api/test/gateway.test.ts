@@ -156,7 +156,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await handle.db.execute(
-    sql`TRUNCATE gw_route_migrations,gw_device_rate_limits,gw_user_limits,gw_attempts,gw_requests,gw_devices,gw_keys,gw_routes,gw_upstreams RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE gw_route_operations,gw_device_rate_limits,gw_user_limits,gw_attempts,gw_requests,gw_devices,gw_keys,gw_routes,gw_upstreams RESTART IDENTITY CASCADE`,
   )
   behavior = 'normal'
   failureStatus = 503
@@ -166,7 +166,7 @@ beforeEach(async () => {
 })
 afterAll(async () => {
   await handle.db.execute(
-    sql`TRUNCATE gw_route_migrations,gw_device_rate_limits,gw_user_limits,gw_attempts,gw_requests,gw_devices,gw_keys,gw_routes,gw_upstreams RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE gw_route_operations,gw_device_rate_limits,gw_user_limits,gw_attempts,gw_requests,gw_devices,gw_keys,gw_routes,gw_upstreams RESTART IDENTITY CASCADE`,
   )
   app?.server.closeAllConnections()
   upstream?.server.closeAllConnections()
@@ -1383,7 +1383,7 @@ for (const scope of ['key', 'user'] as const) {
     )
     expect(await repo.reserve(key.id, values)).toBeNull()
   })
-  test(`${scope} new-day quota excludes yesterday's usage and reservations like Python`, async () => {
+  test(`${scope} new-day quota excludes yesterday's usage and reservations using the configured timezone`, async () => {
     const first = await setup(
       'openai',
       scope === 'key' ? { daily_limit: 60 } : {},
@@ -1986,7 +1986,7 @@ test('default user quota applies until overridden and null restores inheritance'
     exhausted: false,
   })
 })
-test('legacy me returns safe owner profile and quota, requires profile scope', async () => {
+test('alternate me returns safe owner profile and quota, requires profile scope', async () => {
   const first = await setup('openai', { scopes: ['profile'] })
   await service.saveUserLimits(first.owner_id, {
     daily_limit: 100,
@@ -2030,7 +2030,7 @@ test('legacy me returns safe owner profile and quota, requires profile scope', a
     (await app.inject({ method: 'GET', url: '/api/agent/me' })).statusCode,
   ).toBe(401)
 })
-test('legacy me preserves authentication header aliases and legacy error shape', async () => {
+test('alternate me preserves authentication header aliases and alternate error shape', async () => {
   const first = await setup('openai', { scopes: ['chat'] })
   expect(
     (await app.inject({ method: 'GET', url: '/api/agent/me' })).json(),
@@ -2069,12 +2069,12 @@ test('legacy me preserves authentication header aliases and legacy error shape',
   ).toBe(200)
 })
 
-test('legacy PAT CRUD preserves wire fields, notes, no-expiry defaults and rotation history', async () => {
+test('alternate PAT CRUD preserves wire fields, notes, no-expiry defaults and rotation history', async () => {
   const created = await session.inject({
     method: 'POST',
     url: '/api/agent/auth/pat',
     payload: {
-      name: 'legacy',
+      name: 'alternate',
       note: 'searchable memo',
       scopes: ['profile', 'chat', 'profile'],
     },
@@ -2082,7 +2082,7 @@ test('legacy PAT CRUD preserves wire fields, notes, no-expiry defaults and rotat
   expect(created.statusCode, created.body).toBe(201)
   const pat = created.json()
   expect(pat).toMatchObject({
-    name: 'legacy',
+    name: 'alternate',
     token_type: 'personal',
     note: 'searchable memo',
     scopes: ['profile', 'chat'],
@@ -2100,7 +2100,7 @@ test('legacy PAT CRUD preserves wire fields, notes, no-expiry defaults and rotat
   const edited = await session.inject({
     method: 'PUT',
     url: `/api/agent/auth/pat/${pat.id}`,
-    payload: { name: 'renamed legacy', expires_days: 3650 },
+    payload: { name: 'renamed alternate', expires_days: 3650 },
   })
   expect(edited.statusCode).toBe(200)
   expect(edited.json().note).toBe('searchable memo')
@@ -2133,7 +2133,7 @@ test('legacy PAT CRUD preserves wire fields, notes, no-expiry defaults and rotat
   expect(list.body).not.toContain(rotated.json().token)
   expect(list.body).not.toContain('digest')
 })
-test('legacy PAT seven-day statistics exclude reservations and preserve per-record history', async () => {
+test('alternate PAT seven-day statistics exclude reservations and preserve per-record history', async () => {
   const first = await setup()
   const values = {
     id: 'd0000000-0000-4000-8000-000000000001',
@@ -2158,7 +2158,7 @@ test('legacy PAT seven-day statistics exclude reservations and preserve per-reco
   expect(list.json().items[0]).toMatchObject({ requests_7d: 1, tokens_7d: 13 })
   expect(list.json().items[0].last_used_at).toBeTruthy()
   expect(
-    (await service.repo.legacyKeyPage(first.owner_id + 1000, 1, 20)).total,
+    (await service.repo.accessKeyPage(first.owner_id + 1000, 1, 20)).total,
   ).toBe(0)
   await handle.db.execute(
     sql`UPDATE gw_requests SET created_at=now()-interval '8 days'`,
@@ -2168,7 +2168,7 @@ test('legacy PAT seven-day statistics exclude reservations and preserve per-reco
       .items[0].requests_7d,
   ).toBe(0)
 })
-test('legacy PAT management rejects bearer-only access and invalid scopes', async () => {
+test('alternate PAT management rejects bearer-only access and invalid scopes', async () => {
   const first = await setup()
   expect(
     (
@@ -2195,7 +2195,7 @@ test('legacy PAT management rejects bearer-only access and invalid scopes', asyn
   expect(list.json()).toMatchObject({ page: 1, per_page: 100 })
 })
 
-test('legacy PAT usage captures context, filters and isolates rotation history without internal fields', async () => {
+test('alternate PAT usage captures context, filters and isolates rotation history without internal fields', async () => {
   const key = await setup()
   const response = await app.inject({
     method: 'POST',
@@ -2276,7 +2276,7 @@ test('legacy PAT usage captures context, filters and isolates rotation history w
       .total,
   ).toBe(1)
   expect(
-    await service.repo.legacyPatUsage(key.owner_id + 1000, key.id, {
+    await service.repo.accessTokenUsage(key.owner_id + 1000, key.id, {
       page: 1,
       per_page: 20,
       days: 7,
@@ -2300,7 +2300,7 @@ test('legacy PAT usage captures context, filters and isolates rotation history w
       .statusCode,
   ).toBe(400)
 })
-test('legacy PAT usage explicitly exposes reservations, maps client errors and hides fallback traces', async () => {
+test('alternate PAT usage explicitly exposes reservations, maps client errors and hides fallback traces', async () => {
   const key = await setup()
   const id = 'pat-usage-reserved'
   await service.repo.reserve(key.id, {
@@ -3214,16 +3214,16 @@ test('personal usage spans rotated keys, scopes PAT filters and preserves safe u
     for (const entry of [
       {
         method: 'GET' as const,
-        url: '/api/admin/gateway/route-migration/history',
+        url: '/api/admin/gateway/route-consolidation/history',
       },
       {
         method: 'POST' as const,
-        url: '/api/admin/gateway/route-migration/apply',
+        url: '/api/admin/gateway/route-consolidation/apply',
         payload: { model: 'public-model', version: 'a'.repeat(64) },
       },
       {
         method: 'POST' as const,
-        url: '/api/admin/gateway/route-migration/00000000-0000-4000-8000-000000000000/rollback',
+        url: '/api/admin/gateway/route-consolidation/00000000-0000-4000-8000-000000000000/rollback',
         payload: {},
       },
     ]) {
@@ -3281,7 +3281,7 @@ test('personal usage spans rotated keys, scopes PAT filters and preserves safe u
       (
         await app.inject({
           method: 'GET',
-          url: '/api/admin/gateway/route-migration/preflight',
+          url: '/api/admin/gateway/route-consolidation/preflight',
           cookies: {
             coati_session: login.cookies.find(
               (cookie) => cookie.name === 'coati_session',
@@ -3468,14 +3468,14 @@ test('personal usage spans rotated keys, scopes PAT filters and preserves safe u
     })
     expect(deniedExport.statusCode).toBe(403)
     const ownedIds = (
-      await service.repo.legacyMineUsage(key.owner_id, {
+      await service.repo.personalUsage(key.owner_id, {
         page: 1,
         per_page: 20,
         days: 7,
       })
     ).rows.map((item) => item.row.id)
     const foreignIds = (
-      await service.repo.legacyMineUsage(foreignOwner, {
+      await service.repo.personalUsage(foreignOwner, {
         page: 1,
         per_page: 20,
         days: 7,
@@ -3689,7 +3689,7 @@ test.each(['csv', 'xlsx', 'xls'])(
 test('personal usage selected export ignores filter window, validates selection and requires CSRF', async () => {
   const key = await setup()
   await invoke(key.token)
-  const result = await service.repo.legacyMineUsage(key.owner_id, {
+  const result = await service.repo.personalUsage(key.owner_id, {
     page: 1,
     per_page: 20,
     days: 7,
@@ -3886,7 +3886,7 @@ test('admin analytics validates user filters and exposes no data without session
 test('admin usage exposes diagnostics without secrets and preserves list filtering', async () => {
   const key = await setup()
   await invoke(key.token)
-  const rows = await service.repo.legacyMineUsage(key.owner_id, {
+  const rows = await service.repo.personalUsage(key.owner_id, {
     days: 7,
     page: 1,
     per_page: 20,
@@ -3951,8 +3951,8 @@ test('admin usage exposes diagnostics without secrets and preserves list filteri
   await handle.db.execute(
     sql`update gw_requests set execution=null where id=${id}`,
   )
-  const legacy = (await session.inject({ method: 'GET', url })).json().items[0]
-  expect(legacy).toMatchObject({
+  const alternate = (await session.inject({ method: 'GET', url })).json().items[0]
+  expect(alternate).toMatchObject({
     credential_name: null,
     upstream_model: null,
     route_id: null,
@@ -4064,7 +4064,7 @@ test('provider classification is independent of transport and survives omitted u
   )
 })
 
-test('legacy quota editing preserves rate policy and immediately governs admission', async () => {
+test('alternate quota editing preserves rate policy and immediately governs admission', async () => {
   const key = await setup()
   await invoke(key.token)
   await service.saveUserLimits(key.owner_id, {
@@ -4440,8 +4440,8 @@ test('account model discovery never changes administrator declarations', async (
   expect(stored.default_model).toBe('chosen')
 })
 
-test('account models migration backfills actual and vision models without inventing a default', async () => {
-  const migration = readFileSync(
+test('account models consolidation backfills actual and vision models without inventing a default', async () => {
+  const consolidation = readFileSync(
     new URL('../drizzle/0024_gateway_account_models.sql', import.meta.url),
     'utf8',
   )
@@ -4452,7 +4452,7 @@ test('account models migration backfills actual and vision models without invent
       INSERT INTO gw_upstreams VALUES (1),(2);
       INSERT INTO gw_routes VALUES (1,'text','vision',true),(1,'text','',true),(1,' retired ',null,false);`),
     )
-    for (const statement of migration.split('--> statement-breakpoint'))
+    for (const statement of consolidation.split('--> statement-breakpoint'))
       await tx.execute(sql.raw(statement))
     const rows = (await tx.execute(sql`select * from gw_upstreams order by id`))
       .rows
@@ -4905,8 +4905,8 @@ test('public automatic pool invalidates stale affinity during reservation', asyn
   }
 })
 
-const preflightUrl = '/api/admin/gateway/route-migration/preflight'
-test('route migration preflight is read only and proposes a closed single-account route', async () => {
+const preflightUrl = '/api/admin/gateway/route-consolidation/preflight'
+test('route consolidation preflight is read only and proposes a closed single-account route', async () => {
   const empty = await session.inject({ method: 'GET', url: preflightUrl })
   expect(empty.json()).toMatchObject({
     read_only: true,
@@ -4914,7 +4914,7 @@ test('route migration preflight is read only and proposes a closed single-accoun
     summary: { total: 0 },
   })
   const key = await setup()
-  const before = await service.repo.routeMigrationSnapshot()
+  const before = await service.repo.routeConsolidationSnapshot()
   const result = await session.inject({ method: 'GET', url: preflightUrl })
   expect(result.statusCode, result.body).toBe(200)
   expect(result.json()).toMatchObject({
@@ -4937,7 +4937,7 @@ test('route migration preflight is read only and proposes a closed single-accoun
   })
   expect(result.body).not.toContain('secret-test-key')
   expect(JSON.stringify(before.accounts)).not.toMatch(/secret|probe_token/)
-  expect(await service.repo.routeMigrationSnapshot()).toEqual(before)
+  expect(await service.repo.routeConsolidationSnapshot()).toEqual(before)
   expect(
     (await session.inject({ method: 'GET', url: preflightUrl })).json(),
   ).toEqual(result.json())
@@ -4956,10 +4956,10 @@ test('route migration preflight is read only and proposes a closed single-accoun
   expect(calls).toBe(0)
 })
 
-test('route migration fingerprint changes with configuration but not secrets or temporary health', async () => {
+test('route consolidation fingerprint changes with configuration but not secrets or temporary health', async () => {
   await setup()
   const version = async () =>
-    (await service.routeMigrationPreflight()).items[0]!.version
+    (await service.routeConsolidationPreflight()).items[0]!.version
   const initial = await version()
   await handle.db.execute(
     sql`update gw_upstreams set secret='rotated-test-ciphertext', cooldown_until=now()+interval '1 hour'`,
@@ -4977,7 +4977,7 @@ test('route migration fingerprint changes with configuration but not secrets or 
   expect(calls).toBe(0)
 })
 
-test('route migration preflight reports candidate ordering, target, override and expanded-pool differences', async () => {
+test('route consolidation preflight reports candidate ordering, target, override and expanded-pool differences', async () => {
   await setup()
   const account = (await service.repo.upstreams())[0]!
   for (const name of ['second-candidate', 'outside-candidate-set']) {
@@ -5007,7 +5007,7 @@ test('route migration preflight reports candidate ordering, target, override and
       expect(route.statusCode, route.body).toBe(201)
     }
   }
-  const report = await service.routeMigrationPreflight()
+  const report = await service.routeConsolidationPreflight()
   expect(report.summary).toMatchObject({ manual_review: 1, blocked: 0 })
   const item = report.items[0]!
   expect(item.proposal).toBeNull()
@@ -5027,7 +5027,7 @@ test('route migration preflight reports candidate ordering, target, override and
 })
 
 test.each(['unsupported', 'disabled', 'override', 'length', 'conflict'])(
-  'route migration preflight blocks invalid legacy configuration: %s',
+  'route consolidation preflight blocks invalid alternate configuration: %s',
   async (kind) => {
     await setup()
     const codes = {
@@ -5069,31 +5069,31 @@ test.each(['unsupported', 'disabled', 'override', 'length', 'conflict'])(
   },
 )
 
-async function migrationProposal() {
+async function consolidationProposal() {
   const response = await session.inject({ method: 'GET', url: preflightUrl })
   expect(response.statusCode).toBe(200)
   const { model, version } = response.json().items[0]
   return { model, version }
 }
-const applyMigration = (payload: object) =>
+const applyConsolidation = (payload: object) =>
   session.inject({
     method: 'POST',
-    url: '/api/admin/gateway/route-migration/apply',
+    url: '/api/admin/gateway/route-consolidation/apply',
     payload,
   })
-const rollbackMigration = (id: string) =>
+const rollbackConsolidation = (id: string) =>
   session.inject({
     method: 'POST',
-    url: `/api/admin/gateway/route-migration/${id}/rollback`,
+    url: `/api/admin/gateway/route-consolidation/${id}/rollback`,
     payload: {},
   })
 
-test('route migration round trip retains IDs, history, model access and accounting', async () => {
+test('route consolidation round trip retains IDs, history, model access and accounting', async () => {
   const key = await setup()
   expect((await invoke(key.token)).statusCode).toBe(200)
   const original = await service.repo.routes()
-  const proposal = await migrationProposal()
-  const applied = await applyMigration(proposal)
+  const proposal = await consolidationProposal()
+  const applied = await applyConsolidation(proposal)
   expect(applied.statusCode, applied.body).toBe(200)
   const journal = applied.json()
   expect(journal.source_routes).toEqual(original)
@@ -5106,21 +5106,21 @@ test('route migration round trip retains IDs, history, model access and accounti
   expect(applied.body).not.toContain('secret-test-key')
   expect(await service.repo.routes()).toEqual([])
   expect((await invoke(key.token)).statusCode).toBe(200)
-  const second = await applyMigration(proposal)
+  const second = await applyConsolidation(proposal)
   expect(second.statusCode).toBe(200)
   expect(second.json().id).toBe(journal.id)
   const history = await session.inject({
     method: 'GET',
-    url: '/api/admin/gateway/route-migration/history',
+    url: '/api/admin/gateway/route-consolidation/history',
   })
   expect(history.json().items).toHaveLength(1)
-  const reverted = await rollbackMigration(journal.id)
+  const reverted = await rollbackConsolidation(journal.id)
   expect(reverted.statusCode, reverted.body).toBe(200)
   expect(reverted.json().rolled_back_at).toBeTruthy()
   expect(reverted.json().rolled_back_by).toBe(key.owner_id)
   expect(await service.repo.routes()).toEqual(original)
   expect(await service.repo.publicRoutes()).toEqual([])
-  expect((await rollbackMigration(journal.id)).json()).toEqual(reverted.json())
+  expect((await rollbackConsolidation(journal.id)).json()).toEqual(reverted.json())
   expect((await invoke(key.token)).statusCode).toBe(200)
   const logs = (await service.repo.listRequests()).items
   expect(logs).toHaveLength(3)
@@ -5137,18 +5137,18 @@ test('route migration round trip retains IDs, history, model access and accounti
     'explicit',
     'public',
   ])
-  const reapplied = await applyMigration(await migrationProposal())
+  const reapplied = await applyConsolidation(await consolidationProposal())
   expect(reapplied.statusCode).toBe(200)
   expect(reapplied.json().id).not.toBe(journal.id)
 })
 
-test('route migration rejects stale fingerprints and manual candidates without changing configuration', async () => {
+test('route consolidation rejects stale fingerprints and manual candidates without changing configuration', async () => {
   await setup()
-  const proposal = await migrationProposal()
+  const proposal = await consolidationProposal()
   await handle.db.execute(
     sql`update gw_routes set description='changed after preflight'`,
   )
-  expect((await applyMigration(proposal)).statusCode).toBe(409)
+  expect((await applyConsolidation(proposal)).statusCode).toBe(409)
   const account = (await service.repo.upstreams())[0]!
   await service.repo.saveRoute({
     model: 'public-model',
@@ -5156,18 +5156,18 @@ test('route migration rejects stale fingerprints and manual candidates without c
     upstream_model: 'openai',
     priority: 200,
   })
-  const manual = await migrationProposal()
-  expect((await applyMigration(manual)).statusCode).toBe(409)
+  const manual = await consolidationProposal()
+  expect((await applyConsolidation(manual)).statusCode).toBe(409)
   expect(await service.repo.publicRoutes()).toEqual([])
-  expect(await service.repo.routeMigrations()).toEqual([])
+  expect(await service.repo.routeConsolidations()).toEqual([])
   expect(await service.repo.routes()).toHaveLength(2)
 })
 
 test.each(['edit', 'delete', 'id-conflict'])(
-  'route migration rollback refuses changed destination: %s',
+  'route consolidation rollback refuses changed destination: %s',
   async (kind) => {
     await setup()
-    const applied = (await applyMigration(await migrationProposal())).json()
+    const applied = (await applyConsolidation(await consolidationProposal())).json()
     if (kind === 'edit')
       await handle.db.execute(
         sql`update gw_public_routes set description='later user change'`,
@@ -5178,83 +5178,83 @@ test.each(['edit', 'delete', 'id-conflict'])(
       await handle.db.execute(
         sql`insert into gw_routes (id, model, upstream_id, upstream_model) values (${applied.source_routes[0].id},'other-alias',${applied.source_routes[0].upstream_id},'openai')`,
       )
-    const before = await service.repo.routeMigrationSnapshot()
-    expect((await rollbackMigration(applied.id)).statusCode).toBe(409)
-    expect(await service.repo.routeMigrationSnapshot()).toEqual(before)
-    expect((await service.repo.routeMigrations())[0]!.rolled_back_at).toBeNull()
+    const before = await service.repo.routeConsolidationSnapshot()
+    expect((await rollbackConsolidation(applied.id)).statusCode).toBe(409)
+    expect(await service.repo.routeConsolidationSnapshot()).toEqual(before)
+    expect((await service.repo.routeConsolidations())[0]!.rolled_back_at).toBeNull()
   },
 )
 
-test('route migration concurrent duplicate submissions create one archive and rollback once', async () => {
+test('route consolidation concurrent duplicate submissions create one archive and rollback once', async () => {
   await setup()
-  const proposal = await migrationProposal()
+  const proposal = await consolidationProposal()
   const results = await Promise.all([
-    applyMigration(proposal),
-    applyMigration(proposal),
+    applyConsolidation(proposal),
+    applyConsolidation(proposal),
   ])
   expect(results.map((response) => response.statusCode)).toEqual([200, 200])
   expect(results[0]!.json().id).toBe(results[1]!.json().id)
-  expect(await service.repo.routeMigrations()).toHaveLength(1)
+  expect(await service.repo.routeConsolidations()).toHaveLength(1)
   expect(await service.repo.publicRoutes()).toHaveLength(1)
   const rollbacks = await Promise.all([
-    rollbackMigration(results[0]!.json().id),
-    rollbackMigration(results[0]!.json().id),
+    rollbackConsolidation(results[0]!.json().id),
+    rollbackConsolidation(results[0]!.json().id),
   ])
   expect(rollbacks.map((response) => response.statusCode)).toEqual([200, 200])
   expect(await service.repo.routes()).toHaveLength(1)
   expect(await service.repo.publicRoutes()).toHaveLength(0)
 })
 
-test('route migration reports lock contention as retryable conflict and performs no partial write', async () => {
+test('route consolidation reports lock contention as retryable conflict and performs no partial write', async () => {
   await setup()
-  const proposal = await migrationProposal()
+  const proposal = await consolidationProposal()
   const connection = await handle.pool.connect()
   try {
     await connection.query('begin')
     await connection.query('lock table gw_upstreams in row exclusive mode')
-    const response = await applyMigration(proposal)
+    const response = await applyConsolidation(proposal)
     expect(response.statusCode, response.body).toBe(409)
     expect(response.json().error).toBeTruthy()
   } finally {
     await connection.query('rollback')
     connection.release()
   }
-  expect(await service.repo.routeMigrations()).toEqual([])
+  expect(await service.repo.routeConsolidations()).toEqual([])
   expect(await service.repo.publicRoutes()).toEqual([])
   expect(await service.repo.routes()).toHaveLength(1)
 })
 
-test('route migration validates payloads and requires browser CSRF on writes', async () => {
+test('route consolidation validates payloads and requires browser CSRF on writes', async () => {
   const key = await setup()
   expect(
-    (await applyMigration({ model: 'public-model', version: 'bad' }))
+    (await applyConsolidation({ model: 'public-model', version: 'bad' }))
       .statusCode,
   ).toBe(400)
-  expect((await rollbackMigration('invalid')).statusCode).toBe(400)
+  expect((await rollbackConsolidation('invalid')).statusCode).toBe(400)
   expect(
-    (await rollbackMigration('00000000-0000-4000-8000-000000000000'))
+    (await rollbackConsolidation('00000000-0000-4000-8000-000000000000'))
       .statusCode,
   ).toBe(404)
-  const proposal = await migrationProposal()
+  const proposal = await consolidationProposal()
   // Use the already-authenticated helper's cookie but deliberately remove CSRF.
   const denied = await session.inject({
     method: 'POST',
-    url: '/api/admin/gateway/route-migration/apply',
+    url: '/api/admin/gateway/route-consolidation/apply',
     payload: proposal,
     headers: { 'x-csrf-token': '' },
   })
   expect(denied.statusCode).toBe(403)
   const bearer = await app.inject({
     method: 'POST',
-    url: '/api/admin/gateway/route-migration/apply',
+    url: '/api/admin/gateway/route-consolidation/apply',
     payload: proposal,
     headers: { authorization: `Bearer ${key.token}` },
   })
   expect([401, 403]).toContain(bearer.statusCode)
-  expect(await service.repo.routeMigrations()).toEqual([])
+  expect(await service.repo.routeConsolidations()).toEqual([])
 })
 
-test('legacy route list filters and paginates public configs while summary remains global', async () => {
+test('alternate route list filters and paginates public configs while summary remains global', async () => {
   const { route, account } = await configurePublicPool(true)
   await session.inject({
     method: 'POST',
@@ -5338,7 +5338,7 @@ test('legacy route list filters and paginates public configs while summary remai
   ).toBe(400)
 })
 
-test('legacy route readiness reflects account state and both declared targets without probing', async () => {
+test('alternate route readiness reflects account state and both declared targets without probing', async () => {
   const { route } = await configurePublicPool(true)
   await handle.db.execute(
     sql`update gw_public_routes set vision_model='missing-vision', updated_at=null where id=${route.id}`,
@@ -5368,7 +5368,7 @@ test('legacy route readiness reflects account state and both declared targets wi
   expect(calls).toBe(0)
 })
 
-test('legacy route seven-day usage counts failures but only bills consumed tokens and excludes reservations', async () => {
+test('alternate route seven-day usage counts failures but only bills consumed tokens and excludes reservations', async () => {
   const { key } = await configurePublicPool(true)
   for (let i = 0; i < 4; i++)
     expect((await invoke(key.token, { model: 'pool-alias' })).statusCode).toBe(
@@ -5395,7 +5395,7 @@ test('legacy route seven-day usage counts failures but only bills consumed token
   expect(response.json().items[0].usage_7d.last_used_at).toMatch(/Z$/)
 })
 
-test('native public-route updates advance legacy updated_at and list is cookie/RBAC protected', async () => {
+test('native public-route updates advance alternate updated_at and list is cookie/RBAC protected', async () => {
   const { key, route } = await configurePublicPool(false)
   await handle.db.execute(
     sql`update gw_public_routes set updated_at='2020-01-01' where id=${route.id}`,
@@ -5425,17 +5425,17 @@ test('native public-route updates advance legacy updated_at and list is cookie/R
     ).toBe(401)
 })
 
-test('public route timestamp migration keeps unknown history null and defaults only new records', async () => {
+test('public route timestamp consolidation keeps unknown history null and defaults only new records', async () => {
   await handle.db.transaction(async (tx) => {
     await tx.execute(
       sql`create temporary table gw_public_routes (id integer primary key) on commit drop`,
     )
     await tx.execute(sql`insert into gw_public_routes (id) values (1)`)
-    const migration = readFileSync(
+    const consolidation = readFileSync(
       new URL('../drizzle/0027_gateway_route_updated_at.sql', import.meta.url),
       'utf8',
     )
-    await tx.execute(sql.raw(migration))
+    await tx.execute(sql.raw(consolidation))
     await tx.execute(sql`insert into gw_public_routes (id) values (2)`)
     const rows = (
       await tx.execute(
@@ -5447,16 +5447,16 @@ test('public route timestamp migration keeps unknown history null and defaults o
   })
 })
 
-const legacyRouteUrl = '/api/admin/agent/routes'
+const candidateRouteBodyUrl = '/api/admin/agent/routes'
 const createLegacyRoute = (payload: unknown) =>
   session.inject({
     method: 'POST',
-    url: legacyRouteUrl,
+    url: candidateRouteBodyUrl,
     payload: payload as any,
   })
-test('legacy route writes normalize defaults and partial updates into the native public configuration', async () => {
+test('alternate route writes normalize defaults and partial updates into the native public configuration', async () => {
   const response = await createLegacyRoute({
-    model_name: '  legacy-route  ',
+    model_name: '  alternate-route  ',
     description: ' note ',
     enabled: 'off',
     fallback_enabled: 'yes',
@@ -5481,7 +5481,7 @@ test('legacy route writes normalize defaults and partial updates into the native
     ].sort(),
   )
   expect(row).toMatchObject({
-    model_name: 'legacy-route',
+    model_name: 'alternate-route',
     credential_id: null,
     upstream_model: null,
     enabled: false,
@@ -5490,7 +5490,7 @@ test('legacy route writes normalize defaults and partial updates into the native
   })
   const updated = await session.inject({
     method: 'PUT',
-    url: `${legacyRouteUrl}/${row.id}`,
+    url: `${candidateRouteBodyUrl}/${row.id}`,
     payload: {
       description: ' ',
       fallback_enabled: null,
@@ -5519,18 +5519,18 @@ test('legacy route writes normalize defaults and partial updates into the native
     (
       await session.inject({
         method: 'DELETE',
-        url: `${legacyRouteUrl}/${row.id}`,
+        url: `${candidateRouteBodyUrl}/${row.id}`,
       })
     ).json().error,
   ).toBe('启用中的模型路由不能删除，请先停用后再删除')
   await session.inject({
     method: 'PUT',
-    url: `${legacyRouteUrl}/${row.id}`,
+    url: `${candidateRouteBodyUrl}/${row.id}`,
     payload: { enabled: false },
   })
   const deleted = await session.inject({
     method: 'DELETE',
-    url: `${legacyRouteUrl}/${row.id}`,
+    url: `${candidateRouteBodyUrl}/${row.id}`,
   })
   expect(deleted.statusCode).toBe(200)
   expect(deleted.json()).toEqual({ ok: true })
@@ -5539,7 +5539,7 @@ test('legacy route writes normalize defaults and partial updates into the native
     (
       await session.inject({
         method: 'DELETE',
-        url: `${legacyRouteUrl}/${row.id}`,
+        url: `${candidateRouteBodyUrl}/${row.id}`,
       })
     ).statusCode,
   ).toBe(404)
@@ -5547,18 +5547,18 @@ test('legacy route writes normalize defaults and partial updates into the native
     (
       await session.inject({
         method: 'PUT',
-        url: `${legacyRouteUrl}/${row.id}`,
+        url: `${candidateRouteBodyUrl}/${row.id}`,
         payload: {},
       })
     ).statusCode,
   ).toBe(404)
 })
 
-test('legacy bound route serves requests through the same runtime and supports clearing overrides', async () => {
+test('alternate bound route serves requests through the same runtime and supports clearing overrides', async () => {
   const key = await setup()
   const account = (await service.repo.upstreams())[0]!
   const response = await createLegacyRoute({
-    model_name: 'legacy-model',
+    model_name: 'alternate-model',
     credential_id: String(account.id),
     upstream_model: ' openai ',
     vision_model: 'vision-target',
@@ -5569,15 +5569,15 @@ test('legacy bound route serves requests through the same runtime and supports c
   expect(response.statusCode, response.body).toBe(201)
   expect(response.json().upstream_base).toBe(base + '/alternate')
   await handle.db.execute(
-    sql`update gw_keys set models='["legacy-model"]' where id=${key.id}`,
+    sql`update gw_keys set models='["alternate-model"]' where id=${key.id}`,
   )
-  expect((await invoke(key.token, { model: 'legacy-model' })).statusCode).toBe(
+  expect((await invoke(key.token, { model: 'alternate-model' })).statusCode).toBe(
     200,
   )
   expect(observed.model).toBe('openai')
   const partial = await session.inject({
     method: 'PUT',
-    url: `${legacyRouteUrl}/${response.json().id}`,
+    url: `${candidateRouteBodyUrl}/${response.json().id}`,
     payload: { description: null },
   })
   expect(partial.json()).toMatchObject({
@@ -5589,7 +5589,7 @@ test('legacy bound route serves requests through the same runtime and supports c
   })
   const cleared = await session.inject({
     method: 'PUT',
-    url: `${legacyRouteUrl}/${response.json().id}`,
+    url: `${candidateRouteBodyUrl}/${response.json().id}`,
     payload: { upstream_base: '', credential_id: null, vision_model: ' ' },
   })
   expect(cleared.json()).toMatchObject({
@@ -5600,7 +5600,7 @@ test('legacy bound route serves requests through the same runtime and supports c
   expect(calls).toBe(1)
 })
 
-test('legacy route credential validation preserves implicit-target readiness and rejects explicit unsupported models', async () => {
+test('alternate route credential validation preserves implicit-target readiness and rejects explicit unsupported models', async () => {
   await setup()
   const account = (await service.repo.upstreams())[0]!
   const implicit = await createLegacyRoute({
@@ -5610,7 +5610,7 @@ test('legacy route credential validation preserves implicit-target readiness and
   expect(implicit.statusCode, implicit.body).toBe(201)
   const listed = await session.inject({
     method: 'GET',
-    url: legacyRouteUrl + '?search=undeclared-alias',
+    url: candidateRouteBodyUrl + '?search=undeclared-alias',
   })
   expect(listed.json().items[0].readiness).toBe('attention')
   expect(
@@ -5656,7 +5656,7 @@ test('legacy route credential validation preserves implicit-target readiness and
   ).toBe(201)
 })
 
-test('legacy route duplicate and URL validation keeps account credentials within the original origin', async () => {
+test('alternate route duplicate and URL validation keeps account credentials within the original origin', async () => {
   await setup()
   const account = (await service.repo.upstreams())[0]!
   expect(
@@ -5718,7 +5718,7 @@ test.each([
     '路由说明 不能超过 255 个字符',
   ],
 ])(
-  'legacy route field validation returns Python-compatible messages (%j)',
+  'alternate route field validation returns gateway messages (%j)',
   async (payload, message) => {
     const result = await createLegacyRoute(payload)
     expect(result.statusCode).toBe(400)
@@ -5726,14 +5726,14 @@ test.each([
   },
 )
 
-test('legacy writes reject PATs and missing CSRF and concurrent duplicate creation is atomic', async () => {
+test('alternate writes reject PATs and missing CSRF and concurrent duplicate creation is atomic', async () => {
   const key = await setup()
-  const payload = { model_name: 'concurrent-legacy' }
+  const payload = { model_name: 'concurrent-alternate' }
   expect(
     (
       await app.inject({
         method: 'POST',
-        url: legacyRouteUrl,
+        url: candidateRouteBodyUrl,
         payload,
         headers: { authorization: `Bearer ${key.token}` },
       })
@@ -5743,7 +5743,7 @@ test('legacy writes reject PATs and missing CSRF and concurrent duplicate creati
     (
       await session.inject({
         method: 'POST',
-        url: legacyRouteUrl,
+        url: candidateRouteBodyUrl,
         payload,
         headers: { 'x-csrf-token': '' },
       })
@@ -5756,7 +5756,7 @@ test('legacy writes reject PATs and missing CSRF and concurrent duplicate creati
   expect(results.map((row) => row.statusCode).sort()).toEqual([201, 409])
   expect(
     (await service.repo.publicRoutes()).filter(
-      (row) => row.model === 'concurrent-legacy',
+      (row) => row.model === 'concurrent-alternate',
     ),
   ).toHaveLength(1)
 })
@@ -5772,7 +5772,7 @@ async function personalScopeFixture() {
   return Number(row!.id)
 }
 
-test('personal scope is absent from platform administration, probes and migration account snapshots', async () => {
+test('personal scope is absent from platform administration, probes and consolidation account snapshots', async () => {
   await setup()
   const id = await personalScopeFixture()
   const listed = await session.inject({
@@ -5783,7 +5783,7 @@ test('personal scope is absent from platform administration, probes and migratio
   expect(listed.body).not.toContain('personal-private-name')
   expect(listed.body).not.toContain('private-prefix')
   expect(
-    (await service.repo.routeMigrationSnapshot()).accounts.map((row) => row.id),
+    (await service.repo.routeConsolidationSnapshot()).accounts.map((row) => row.id),
   ).not.toContain(id)
   expect(
     (await service.repo.probeCandidates(5, 0)).map((row) => row.id),
@@ -5854,7 +5854,7 @@ test('personal scope cannot enter explicit or public platform route bindings', a
   expect(await service.repo.publicRoutes()).toEqual([])
 })
 
-test('personal scope is excluded from automatic pool and invalid legacy explicit references', async () => {
+test('personal scope is excluded from automatic pool and invalid alternate explicit references', async () => {
   const { key, account, backup, route } = await configurePublicPool(false)
   const id = await personalScopeFixture()
   await handle.db.execute(
@@ -6096,7 +6096,7 @@ test('personal runtime isolates identical model names and session IDs between tw
         sql`select owner_id,upstream_id from gw_session_bindings order by owner_id`,
       )
     ).rows
-    // Python personal affinity is stateless; owner isolation is checked above.
+    // Gateway personal affinity is stateless; owner isolation is checked above.
     expect(bindings).toEqual([])
     expect(
       (await service.repo.candidates('mine/openai', true, false, owner)).map(
@@ -6111,7 +6111,7 @@ test('personal runtime isolates identical model names and session IDs between tw
   }
 })
 
-test('personal runtime retries within the owned pool then reapplies Python stateless affinity', async () => {
+test('personal runtime retries within the owned pool then reapplies Gateway stateless affinity', async () => {
   const { key, account } = await personalRuntimeSetup()
   const [backup] = (
     await handle.db.execute(
@@ -7287,7 +7287,7 @@ for (const [protocol, suffix] of [
   ['anthropic', 'ROOT'],
 ] as const)
   for (const stream of [false, true]) {
-    test(`upstream endpoint ${protocol} ${suffix || 'version-root'} ${stream ? 'SSE' : 'JSON'} matches Python without duplicated suffix`, async () => {
+    test(`upstream endpoint ${protocol} ${suffix || 'version-root'} ${stream ? 'SSE' : 'JSON'} matches Gateway without duplicated suffix`, async () => {
       const key = await setup(protocol)
       const row = (await service.repo.upstreams())[0]!
       const upstreamBase = suffix === 'ROOT' ? base.slice(0, -3) : base + suffix
@@ -7537,7 +7537,7 @@ test('platform affinity honors disabled mode and configurable binding lifetime',
   } finally { await scoped.transport.close(); await disabled.transport.close() }
 })
 
-test('native key creation preserves Python unlimited defaults and supports explicit expiry', async () => {
+test('native key creation preserves Gateway unlimited defaults and supports explicit expiry', async () => {
   const key = await setup()
   expect(key).toMatchObject({expires_at: null, daily_limit: 0, concurrency_limit: 0, rpm_limit: 0})
   const explicit = await session.inject({method: 'POST', url: '/api/admin/gateway/keys', payload: {name:'explicit expiry', models:['public-model'], expires_days:3650, rpm_limit:5, concurrency_limit:2}})
@@ -7551,7 +7551,7 @@ test.each([
   ['sse', 'event: error\ndata: {"error":{"message":"bad SSE request"}}\n\n', {error:{message:'bad SSE request'}}],
   ['wrapped', JSON.stringify({message:'data: {"error":{"message":"unwrapped","code":"bad"}}'}), {message:'unwrapped',code:'bad'}],
   ['text', 'plain failure secret-test-key', {error:'plain failure [redacted]'}],
-])('final upstream %s error preserves Python body and request identity', async (_, raw, expected) => {
+])('final upstream %s error preserves Gateway body and request identity', async (_, raw, expected) => {
   const key = await setup()
   behavior='raw-failure'; failureStatus=422; failureBody=raw as string
   const response=await invoke(key.token)

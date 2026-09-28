@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { pyJsonDumps, safePayload } from '@/common/request-meta'
+import { safePayload } from '@/common/request-meta'
 
 describe('safePayload', () => {
-  it('None → null', () => {
+  it('缺省 → null', () => {
     expect(safePayload(null)).toBeNull()
     expect(safePayload(undefined)).toBeNull()
   })
@@ -23,11 +23,9 @@ describe('safePayload', () => {
     })
   })
 
-  it('输出格式同 json.dumps(ensure_ascii=False)', () => {
-    expect(safePayload({ a: 1, b: [true, null], c: '中文' })).toBe('{"a": 1, "b": [true, null], "c": "中文"}')
-    expect(pyJsonDumps({})).toBe('{}')
-    expect(pyJsonDumps([])).toBe('[]')
-    expect(pyJsonDumps('a"b\n')).toBe('"a\\"b\\n"')
+  it('输出紧凑 JSON，非 ASCII 原样保留', () => {
+    expect(safePayload({ a: 1, b: [true, null], c: '中文' })).toBe('{"a":1,"b":[true,null],"c":"中文"}')
+    expect(safePayload('a"b\n')).toBe('"a\\"b\\n"')
   })
 
   it('超过 2000 字符截断', () => {

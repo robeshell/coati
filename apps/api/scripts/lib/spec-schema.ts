@@ -1,0 +1,131 @@
+/**
+ * JSON Schema of a `pnpm scaffold -- --spec` file, built from the scaffold's own tables (field types, name rules,
+ * reserved names, text limits) so it can't drift from the code. Written to docs/spec.schema.json by
+ * `pnpm scaffold -- --write-schema`; test/scaffold.test.ts checks the file is up to date.
+ *
+ * The schema is structural: editors and agents catch typos and missing keys early. The authoritative check stays
+ * validateSpec (`pnpm scaffold -- --spec <file> --validate-only`), which also knows cross-field rules.
+ */
+
+import { FIELD_TYPE_MAP, NAME_RE, OPTION_TONES, RESERVED_FIELDS, SPEC_KEYS, UNIQUE_TYPES, UNSAFE_TEXT } from '../scaffold'
+
+/** What each field type is for (shown by editors; AGENTS.md "Field type inference" has the full table) */
+export const FIELD_TYPE_NOTES: Record<string, string> = {
+  str: 'General text, up to 100 characters (names, titles, addresses...)',
+  str50: 'Short text, up to 50 characters',
+  str20: 'Short codes, phone numbers and serial numbers, up to 20 characters',
+  str500: 'Longer single-line text, up to 500 characters (links, short notes)',
+  text: 'Multi-line text of any length (descriptions, body text)',
+  int: 'Integer (quantities, sequence numbers, ages)',
+  float: 'Number with up to 2 decimal places (amounts, prices, ratios); returned as a string by the API',
+  bool: 'Yes / no',
+  date: 'Date, YYYY-MM-DD',
+  datetime: 'Date and time',
+  file: 'Attachment (a file ID from the file center)',
+  image: 'Image (a file ID from the file center)',
+  enum: 'A few fixed options (status, type); options is required',
+  dict: 'Options that admins maintain (category, source, industry); dict (the data dictionary code) is required',
+}
+
+export function specJsonSchema(): Record<string, unknown> {
+  // Read inside the function: scaffold.ts imports this module, so its constants aren't initialized at load time
+  const types = Object.keys(FIELD_TYPE_MAP)
+  /** "not these characters" as a whole-string pattern (titles and labels land in JSX and string literals) */
+  const safeText = `^[^${UNSAFE_TEXT.source.slice(1, -1)}]+$`
+  const text = (max: number, description: string) => ({ type: 'string', minLength: 1, maxLength: max, pattern: safeText, description })
+  const onlyFor = (typeList: string[], key: string) => ({
+    if: { properties: { type: { not: { enum: typeList } } }, required: ['type'] },
+    then: { properties: { [key]: { const: false } } },
+  })
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: 'castor-kit module spec (pnpm scaffold -- --spec <file>)',
+    description:
+      'A module spec inferred from a one-line business requirement. This schema checks structure only; rules such as ' +
+      '"unique only for text and number fields" and "defaults must match the field type" are enforced by ' +
+      '`pnpm scaffold -- --spec <file> --validate-only`. How to infer a spec: AGENTS.md "From a one-line requirement to a spec"; examples: docs/examples/specs/.',
+    type: 'object',
+    additionalProperties: false,
+    required: ['name', 'title', 'fields'],
+    properties: {
+      $schema: { type: 'string', description: 'For editor hints; points to this file' },
+      name: {
+        type: 'string',
+        pattern: NAME_RE.source,
+        maxLength: 40,
+        description: 'Module name, singular English in snake_case (e.g. device, customer_order); table = name + s, API = /api/admin/<kebab>s (component_center: /api/admin/component-center/<kebab>s)',
+      },
+      domain: { enum: ['admin', 'component_center'], default: 'admin', description: 'Business modules use admin (the default)' },
+      title: text(50, 'Chinese name of the module, used for the page title, menu name and API docs, e.g. 设备台账'),
+      dataScope: { type: 'boolean', default: false, description: 'true when rows are isolated by department / creator (data scope)' },
+      fields: { type: 'array', minItems: 1, maxItems: 50, items: { $ref: '#/$defs/field' }, description: 'Business fields (id, created_at and updated_at are generated automatically; leave them out)' },
+      menu: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          parentId: {
+            type: 'integer',
+            description:
+              "Parent menu ID; defaults to the 业务管理 (Business) directory (ID 1000) for admin, the gallery's 页面模板 (Page patterns) directory (ID 43) for component_center",
+          },
+          icon: { type: 'string', description: 'An icon name from apps/web/src/lib/menu-icons.ts' },
+        },
+        description: 'Only when present are the menu and button permissions added to scripts/seed-rbac.ts; new business modules usually use {}',
+      },
+      i18n: {
+        type: 'object',
+        additionalProperties: false,
+        properties: Object.fromEntries(
+          SPEC_KEYS.i18n.map((lang) => [lang, { type: 'object', additionalProperties: { type: 'string' }, description: `Chinese → ${lang} translations (title, field labels, option labels)` }]),
+        ),
+      },
+    },
+    $defs: {
+      field: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'type', 'label'],
+        properties: {
+          name: { type: 'string', pattern: NAME_RE.source, maxLength: 40, not: { enum: [...RESERVED_FIELDS] }, description: 'Field name, English in snake_case' },
+          type: {
+            enum: types,
+            description: types.map((t) => `${t}: ${FIELD_TYPE_NOTES[t] ?? ''}`).join('; '),
+          },
+          label: text(50, 'Chinese name of the field, used for table headers, forms, the import template and API docs'),
+          required: { type: 'boolean', description: "Required (NOT NULL, checked on create and edit); file / image fields can't be required" },
+          unique: { type: 'boolean', description: `Unique (only for ${[...UNIQUE_TYPES].join(' / ')})` },
+          default: { type: ['string', 'number', 'boolean', 'null'], description: 'Default value on create; must match the field type (for enum, an option value)' },
+          options: { type: 'array', minItems: 1, items: { $ref: '#/$defs/option' }, description: 'Options of an enum field' },
+          dict: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$', description: 'Data dictionary code of a dict field (e.g. device_category)' },
+        },
+        allOf: [
+          { if: { properties: { type: { const: 'enum' } }, required: ['type'] }, then: { required: ['options'] } },
+          { if: { properties: { type: { const: 'dict' } }, required: ['type'] }, then: { required: ['dict'] } },
+          onlyFor([...UNIQUE_TYPES], 'unique'),
+          {
+            if: { properties: { type: { enum: ['file', 'image'] } }, required: ['type'] },
+            then: { properties: { required: { const: false }, default: { enum: [null, ''] } } },
+          },
+        ],
+      },
+      option: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['value', 'label'],
+        properties: {
+          value: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,50}$', description: 'The value stored in the database (English, e.g. in_use)' },
+          label: text(50, 'Chinese label shown to users, e.g. 使用中'),
+          tone: {
+            enum: [...OPTION_TONES],
+            description: 'Badge colour of this option in the list (default neutral), for status-like fields: e.g. in use → success, under repair → warning, scrapped → danger',
+          },
+        },
+      },
+    },
+  }
+}
+
+/** docs/spec.schema.json content */
+export function specSchemaText(): string {
+  return `${JSON.stringify(specJsonSchema(), null, 2)}\n`
+}

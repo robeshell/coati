@@ -4,14 +4,25 @@
 
 import { and, count, eq, gte, or, sql, type SQL } from 'drizzle-orm'
 import type { Db } from '@/db/client'
-import { admin_users, login_logs, operation_logs, type NewLoginLog, type NewOperationLog } from '@/db/schema'
+import { admin_users, departments, login_logs, operation_logs, type NewLoginLog, type NewOperationLog } from '@/db/schema'
 import { utcNow } from '@/db/schema/columns'
 
-/** `datetime.utcnow() - timedelta(minutes=n)`, computed by the DB */
+/** UTC now minus n minutes, computed by the DB */
 const windowStart = (minutes: number) => sql`${utcNow()} - make_interval(mins => ${minutes})`
 
 export class AuthRepository {
   constructor(private readonly db: Db) {}
+
+  async deptName(deptId: number | null): Promise<string | null> {
+    if (deptId === null) return null
+    const [row] = await this.db.select({ name: departments.name }).from(departments).where(eq(departments.id, deptId)).limit(1)
+    return row?.name ?? null
+  }
+
+  async getAdminById(id: number) {
+    const [row] = await this.db.select().from(admin_users).where(eq(admin_users.id, id)).limit(1)
+    return row ?? null
+  }
 
   async getAdminByUsername(username: string) {
     const [row] = await this.db.select().from(admin_users).where(eq(admin_users.username, username)).limit(1)
@@ -26,8 +37,15 @@ export class AuthRepository {
     await this.db.insert(operation_logs).values(item)
   }
 
-  async updatePasswordHash(userId: number, passwordHash: string, expectedHash: string): Promise<boolean> {
-    const rows = await this.db.update(admin_users).set({ password_hash: passwordHash }).where(and(eq(admin_users.id, userId), eq(admin_users.password_hash, expectedHash))).returning({id:admin_users.id})
+  async recordLogin(userId: number, ip: string): Promise<void> {
+    await this.db
+      .update(admin_users)
+      .set({ last_login_at: sql`${utcNow()}`, last_login_ip: ip || null })
+      .where(eq(admin_users.id, userId))
+  }
+
+  async updatePasswordHash(userId: number, passwordHash: string, expectedHash?: string): Promise<boolean> {
+    const rows = await this.db.update(admin_users).set({ password_hash: passwordHash }).where(and(eq(admin_users.id, userId), expectedHash === undefined ? undefined : eq(admin_users.password_hash, expectedHash))).returning({ id: admin_users.id })
     return rows.length === 1
   }
 

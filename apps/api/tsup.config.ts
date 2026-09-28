@@ -7,8 +7,6 @@ export default defineConfig({
     main: 'src/main.ts',
     worker: 'src/worker.ts',
     'rotate-gateway-key': 'scripts/rotate-gateway-key.ts',
-    'legacy-archive': 'scripts/legacy-archive.ts',
-    'legacy-import': 'scripts/legacy-import.ts',
     migrate: 'src/db/migrate-cli.ts',
     'setup-once': 'scripts/setup-once.ts',
   },

@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import { eq, like, sql } from 'drizzle-orm'
+import { eq, like } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { DbHandle } from '@/db/client'
@@ -18,7 +18,6 @@ import {
 } from './helpers'
 
 const P = 'ck_test_r2_t_'
-const INTERNAL = { error: '服务器内部错误，请稍后重试' }
 let app: FastifyInstance
 let handle: DbHandle
 let s: AuthedSession
@@ -31,12 +30,6 @@ async function cleanup() {
 async function row(id: number) {
   const [r] = await handle.db.select().from(announcements).where(eq(announcements.id, id))
   return r!
-}
-
-/** Computes the expected value in the database (session time-zone conversion), without going through JS Date */
-async function dbScalar(expr: ReturnType<typeof sql>): Promise<string> {
-  const res = await handle.db.execute<{ v: string }>(sql`SELECT (${expr})::text AS v`)
-  return res.rows[0]!.v
 }
 
 async function readXlsx(buf: Buffer): Promise<unknown[][]> {
@@ -67,11 +60,11 @@ describe('announcement', () => {
   let a: number
   let b: number
 
-  it('新增：201，默认值与 publish_at 解析（带 Z 按会话时区换算、naive 原样）', async () => {
+  it('新增：201，默认值与 publish_at（带时区换算为 UTC、不带时区按 UTC）', async () => {
     const res = await s.inject({
       method: 'POST',
       url: '/api/admin/announcements',
-      payload: { title: ` ${P}甲 `, publish_at: '2026-09-23T10:00:00Z', is_top: 'x', sort_order: '3', content: null },
+      payload: { title: ` ${P}甲 `, publish_at: '2026-09-23T10:00:00Z', is_top: true, sort_order: 3, content: null },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json()
@@ -80,25 +73,34 @@ describe('announcement', () => {
       ['announce_type', 'content', 'created_at', 'id', 'is_top', 'publish_at', 'sort_order', 'status', 'title', 'updated_at'].sort(),
     )
     expect(body).toMatchObject({ title: `${P}甲`, content: '', announce_type: 'system', status: 'draft', is_top: true, sort_order: 3 })
-    const expected = await dbScalar(sql`('2026-09-23T10:00:00+00:00'::timestamptz)::timestamp`)
-    expect((await row(a)).publish_at).toBe(expected)
-    expect(body.publish_at).toBe(expected.replace(' ', 'T'))
+    expect((await row(a)).publish_at).toBe('2026-09-23 10:00:00')
+    expect(body.publish_at).toBe('2026-09-23T10:00:00.000000Z')
 
     const rb = await s.inject({
       method: 'POST',
       url: '/api/admin/announcements',
-      payload: { title: `${P}乙`, announce_type: 'activity', status: 'published', publish_at: 'garbage', sort_order: 2.9, is_top: 0 },
+      payload: { title: `${P}乙`, announce_type: 'activity', status: 'published', publish_at: '', sort_order: 2, is_top: false },
     })
     expect(rb.json()).toMatchObject({ announce_type: 'activity', status: 'published', publish_at: null, sort_order: 2, is_top: false })
     b = rb.json().id
   })
 
-  it('新增校验：标题为空 400；非字符串标题 / 非法 sort_order / 超长 → 500', async () => {
+  it('新增校验：标题为空 400；类型不符 / 超长 → 400', async () => {
     const post = (payload: object) => s.inject({ method: 'POST', url: '/api/admin/announcements', payload })
     expect([(await post({})).statusCode, (await post({ title: ' ' })).json()]).toEqual([400, { error: '标题不能为空' }])
-    for (const bad of [{ title: 123 }, { title: `${P}x`, sort_order: 'abc' }, { title: `${P}${'x'.repeat(100)}` }, { title: `${P}x`, content: { a: 1 } }]) {
+    const cases: Array<[object, string]> = [
+      [{ title: 123 }, '标题的值无效'],
+      [{ title: `${P}x`, sort_order: 'abc' }, '排序权重的值无效'],
+      [{ title: `${P}x`, sort_order: 2.9 }, '排序权重的值无效'],
+      [{ title: `${P}x`, is_top: 'x' }, '是否置顶的值无效'],
+      [{ title: `${P}x`, content: { a: 1 } }, '内容的值无效'],
+      [{ title: `${P}x`, publish_at: 'garbage' }, '发布时间的值无效'],
+      [{ title: `${P}x`, publish_at: '2026-02-30 10:00' }, '发布时间的值无效'],
+      [{ title: `${P}${'x'.repeat(100)}` }, '有字段超出了长度上限，请缩短后再保存'],
+    ]
+    for (const [bad, error] of cases) {
       const res = await post(bad)
-      expect([res.statusCode, res.json()]).toEqual([500, INTERNAL])
+      expect([res.statusCode, res.json()], JSON.stringify(bad)).toEqual([400, { error }])
     }
     expect(await handle.db.select().from(announcements).where(eq(announcements.title, `${P}x`))).toHaveLength(0)
   })
@@ -112,13 +114,13 @@ describe('announcement', () => {
     expect((await s.inject({ url: `/api/admin/announcements?search=${P}&per_page=1&page=2` })).json().items[0].id).toBe(b)
   })
 
-  it('编辑：空 body / 同值不改 updated_at；status=published 补 publish_at；publish_at 非法保持', async () => {
+  it('编辑：空 body / 同值不改 updated_at；status=published 补 publish_at；类型不符 400', async () => {
     const before = await row(b)
     expect((await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: {} })).statusCode).toBe(200)
-    await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { title: `${P}乙 `, sort_order: '2', is_top: null } })
+    await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { title: `${P}乙 `, sort_order: 2, is_top: null } })
     expect((await row(b)).updated_at).toBe(before.updated_at)
 
-    const pub = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { status: 'published', publish_at: 'bad' } })).json()
+    const pub = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { status: 'published' } })).json()
     expect(pub.publish_at).not.toBeNull()
     const afterPub = await row(b)
     expect(afterPub.updated_at).not.toBe(before.updated_at)
@@ -128,16 +130,24 @@ describe('announcement', () => {
     expect((await row(b)).publish_at).toBe(afterPub.publish_at)
 
     const naive = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { publish_at: '2026-01-02 03:04:05.5' } })).json()
-    expect(naive.publish_at).toBe('2026-01-02T03:04:05.500000')
-    const cleared = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { publish_at: null, content: 0 } })).json()
+    expect(naive.publish_at).toBe('2026-01-02T03:04:05.500000Z')
+    const zoned = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { publish_at: '2026-01-02T08:04:05.25+08:00' } })).json()
+    expect(zoned.publish_at).toBe('2026-01-02T00:04:05.250000Z')
+    const cleared = (await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { publish_at: null, content: null } })).json()
     expect(cleared).toMatchObject({ publish_at: null, content: '' })
 
     expect((await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: { title: '' } })).json()).toEqual({
       error: '标题不能为空',
     })
-    for (const bad of [{ announce_type: null }, { sort_order: [1] }, { title: ['x'] }]) {
+    const cases: Array<[object, string]> = [
+      [{ announce_type: 'x' }, '公告类型只能是 system、activity 或 update'],
+      [{ sort_order: [1] }, '排序权重的值无效'],
+      [{ title: ['x'] }, '标题的值无效'],
+      [{ publish_at: 'bad' }, '发布时间的值无效'],
+    ]
+    for (const [bad, error] of cases) {
       const res = await s.inject({ method: 'PUT', url: `/api/admin/announcements/${b}`, payload: bad })
-      expect([res.statusCode, res.json()]).toEqual([500, INTERNAL])
+      expect([res.statusCode, res.json()], JSON.stringify(bad)).toEqual([400, { error }])
     }
     expect((await s.inject({ method: 'PUT', url: '/api/admin/announcements/99999999', payload: {} })).statusCode).toBe(404)
   })
@@ -164,7 +174,7 @@ describe('announcement', () => {
       payload: { export_mode: 'selected', ids: [b, a], fields: ['title', 'is_top', 'content', 'publish_at', 'bogus'], file_type: 'csv' },
     })
     expect(csv.headers['content-disposition']).toBe('attachment; filename=announcements_export.csv')
-    expect(csv.body).toBe(`﻿标题,是否置顶,内容,发布时间\r\n"${P}甲,""q""",是,'=cmd,2026-01-02 03:04:05\r\n${P}乙,否,,\r\n`)
+    expect(csv.body).toBe(`\uFEFF标题,是否置顶,内容,发布时间\r\n"${P}甲,""q""",是,'=cmd,2026-01-02 03:04:05\r\n${P}乙,否,,\r\n`)
 
     const xlsx = await s.inject({ method: 'POST', url: '/api/admin/announcements/export', payload: { ids: [a] } })
     expect(xlsx.headers['content-disposition']).toBe('attachment; filename=announcements_export.xlsx')
@@ -185,7 +195,7 @@ describe('announcement', () => {
       { label: '创建时间', value: 'created_at' },
     ])
     const bad = await s.inject({ method: 'POST', url: '/api/admin/announcements/export', payload: { export_mode: 'selected', ids: 'abc' } })
-    expect([bad.statusCode, bad.json()]).toEqual([500, INTERNAL])
+    expect([bad.statusCode, bad.json()]).toEqual([400, { error: '导出记录的值无效' }])
   })
 
   it('模板：默认 xlsx，csv 精确字节', async () => {
@@ -193,43 +203,43 @@ describe('announcement', () => {
     expect(x.headers['content-disposition']).toBe('attachment; filename=announcements_import_template.xlsx')
     expect((await readXlsx(x.rawPayload))[1]).toEqual(['系统维护公告', 'system', 'draft', '否', '0', '系统将于今晚进行维护，请提前保存工作。'])
     const c = await s.inject({ url: '/api/admin/announcements/template?file_type=csv' })
-    expect(c.body).toBe('﻿标题,公告类型,状态,是否置顶,排序权重,内容\r\n系统维护公告,system,draft,否,0,系统将于今晚进行维护，请提前保存工作。\r\n')
+    expect(c.body).toBe('\uFEFF标题,公告类型,状态,是否置顶,排序权重,内容\r\n系统维护公告,system,draft,否,0,系统将于今晚进行维护，请提前保存工作。\r\n')
   })
 
-  it('导入：逐行提交，错误行不影响成功行，返回 200 + error_rows', async () => {
+  it('导入：存在错误行时整批回滚，返回 400 + error_rows；全部合法时写入', async () => {
     const long = `${P}${'x'.repeat(100)}`
-    const file = multipartFile(
-      'a.csv',
-      '标题,公告类型,状态,是否置顶,排序权重,内容\n' +
-        `${P}导入1,activity,published,是,5,c1\n` +
-        ',system,draft,,,\n' +
-        `${P}导入2,bogus,bogus,True,x,\n` +
-        `${long},,,,,\n`,
-    )
+    const header = '标题,公告类型,状态,是否置顶,排序权重,内容\n'
+    const row1 = `${P}导入1,activity,published,是,5,c1\n`
+    const row2 = `${P}导入2,bogus,bogus,true,x,\n`
+    const file = multipartFile('a.csv', `${header}${row1},system,draft,,,\n${row2}${long},,,,,\n`)
     const res = await s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...file })
-    expect(res.statusCode).toBe(200)
+    expect(res.statusCode).toBe(400)
     const body = res.json()
-    expect(body.created).toBe(2)
-    expect(body.updated).toBe(0)
+    expect(body.error).toBe('导入失败，存在错误数据')
+    expect(body.error_count).toBe(2)
     expect(body.error_rows.map((r: { line: number }) => r.line)).toEqual([3, 5])
     expect(body.error_rows[0]).toEqual({
       line: 3,
       reason: '标题不能为空',
       row: { 标题: '', 公告类型: 'system', 状态: 'draft', 是否置顶: '', 排序权重: '', 内容: '' },
     })
-    expect(body.error_rows[1].reason).toMatch(/^\(psycopg2\.errors\.StringDataRightTruncation\) /)
+    expect(body.error_rows[1].reason).toBe('有字段超出了长度上限，请缩短后再保存')
+    expect(await handle.db.select().from(announcements).where(like(announcements.title, `${P}导入%`))).toEqual([])
+
+    const ok = await s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...multipartFile('a.csv', `${header}${row1}${row2}`) })
+    expect(ok.json()).toEqual({ message: '导入成功', created: 2, updated: 0 })
     const [one] = await handle.db.select().from(announcements).where(eq(announcements.title, `${P}导入1`))
     expect(one).toMatchObject({ announce_type: 'activity', status: 'published', is_top: true, sort_order: 5, content: 'c1', publish_at: null })
     const [two] = await handle.db.select().from(announcements).where(eq(announcements.title, `${P}导入2`))
     expect(two).toMatchObject({ announce_type: 'system', status: 'draft', is_top: true, sort_order: 0, content: '' })
 
-    const ok = await s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...multipartFile('a.csv', `title\n${P}导入3\n`) })
-    expect(ok.json()).toEqual({ created: 1, updated: 0 })
+    const ok2 = await s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...multipartFile('a.csv', `title\n${P}导入3\n`) })
+    expect(ok2.json()).toEqual({ message: '导入成功', created: 1, updated: 0 })
   })
 
-  it('导入：表头带空白的列不会被映射；空文件/无文件/格式', async () => {
+  it('导入：表头去空白后映射；空文件/无文件/格式', async () => {
     const res = await s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...multipartFile('a.csv', ` 标题 \n${P}空白表头\n`) })
-    expect(res.json()).toEqual({ created: 0, updated: 0, error_rows: [{ line: 2, reason: '标题不能为空', row: { ' 标题 ': `${P}空白表头` } }] })
+    expect(res.json()).toEqual({ message: '导入成功', created: 1, updated: 0 })
 
     const imp = (f: ReturnType<typeof multipartFile>) => s.inject({ method: 'POST', url: '/api/admin/announcements/import', ...f })
     const wb = new ExcelJS.Workbook()

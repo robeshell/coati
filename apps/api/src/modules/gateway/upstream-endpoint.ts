@@ -1,6 +1,6 @@
 import type { Protocol } from './schema'
 
-/** Preserve Python endpoint handling for bare roots, version roots and full URLs. */
+/** Preserve Gateway endpoint handling for bare roots, version roots and full URLs. */
 export function upstreamEndpoint(base: string, protocol: Protocol) {
   const root = base.replace(/\/+$/, '')
   if (protocol === 'anthropic') {

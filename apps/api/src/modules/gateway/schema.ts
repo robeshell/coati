@@ -89,10 +89,10 @@ export const requestSchema = z
   })
   .passthrough()
 export type GatewayBody = z.infer<typeof requestSchema>
-export function requiresResponseStorage(body: GatewayBody, policy: unknown = 'python') {
+export function requiresResponseStorage(body: GatewayBody, policy: unknown = 'standard') {
   const previous = typeof body.previous_response_id === 'string'
     ? body.previous_response_id.trim() : body.previous_response_id
-  // Python always forces store:false. Strict callers can opt into rejection.
+  // Gateway always forces store:false. Strict callers can opt into rejection.
   return Boolean(previous || (policy === 'strict' &&
     (body.conversation != null || body.background || body.store === true)))
 }

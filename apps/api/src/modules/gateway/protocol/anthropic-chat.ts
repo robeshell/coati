@@ -1,4 +1,4 @@
-/** Python compatibility port. Pure converters; not wired into routes until the matrix is ready. */
+/** Gateway contract port. Pure converters; not wired into routes until the matrix is ready. */
 import {
   type Obj,
   isObject,
@@ -6,7 +6,7 @@ import {
   array,
   truthy,
   fallback,
-  pythonJson,
+  wireJson,
   text,
   image,
 } from './compat-helpers'
@@ -37,7 +37,7 @@ function convertMessage(msg: Obj): Obj[] {
           arguments:
             typeof part.input === 'string'
               ? part.input
-              : pythonJson(fallback(part.input, {})),
+              : wireJson(fallback(part.input, {})),
         },
       })
     else if (part.type === 'tool_result')
@@ -139,7 +139,7 @@ export function anthropicToChatResponse(
         type: 'function',
         function: {
           name: block.name || '',
-          arguments: pythonJson(fallback(block.input, {})),
+          arguments: wireJson(fallback(block.input, {})),
         },
       })
   }

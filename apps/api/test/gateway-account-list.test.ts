@@ -22,7 +22,7 @@ let app: FastifyInstance,
 let ids: number[] = [],
   menu: number | undefined
 const root = '/api/admin/agent'
-const prefix = 'legacy-list-fixture'
+const prefix = 'alternate-list-fixture'
 beforeAll(async () => {
   app = await buildTestApp()
   actor = await createFixture(db)
@@ -96,7 +96,7 @@ afterAll(async () => {
 })
 const platform = (query: string) =>
   admin.inject({ url: `${root}/credentials?${query}` })
-test('legacy account lists require an admin session and their own menu permission', async () => {
+test('alternate account lists require an admin session and their own menu permission', async () => {
   for (const path of ['credentials', 'my-channels']) {
     expect((await app.inject({ url: `${root}/${path}` })).statusCode).toBe(401)
     expect((await ordinary.inject({ url: `${root}/${path}` })).statusCode).toBe(
@@ -104,7 +104,7 @@ test('legacy account lists require an admin session and their own menu permissio
     )
   }
 })
-test('platform list serializes the Python allowlist, models and microsecond history without secrets', async () => {
+test('platform list serializes the Gateway allowlist, models and microsecond history without secrets', async () => {
   const response = await platform('search=unique-needle-model')
   expect(response.statusCode, response.body).toBe(200)
   expect(response.json()).toMatchObject({ total: 1, page: 1, per_page: 20 })
@@ -158,7 +158,7 @@ test('platform search, descending pagination and unfiltered summary preserve sco
   expect(empty.summary).toEqual(first.summary)
   expect(second.summary).toEqual(first.summary)
 })
-test('legacy filters retain Python protocol names, boolean coercion and SQL wildcard search', async () => {
+test('alternate filters retain Gateway protocol names, boolean coercion and SQL wildcard search', async () => {
   for (const [query, expected] of [
     [`search=${prefix}&enabled=off`, [ids[1]]],
     [`search=${prefix}&enabled=yes&health_status=cooldown`, [ids[2]]],
@@ -182,7 +182,7 @@ test('legacy filters retain Python protocol names, boolean coercion and SQL wild
     ),
   ).toBe(true)
 })
-test('legacy pagination clamps negative and huge sizes and defaults invalid integers', async () => {
+test('alternate pagination clamps negative and huge sizes and defaults invalid integers', async () => {
   expect((await platform('page=-2&per_page=0')).json()).toMatchObject({
     page: 1,
     per_page: 1,

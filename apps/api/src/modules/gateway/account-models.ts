@@ -1,4 +1,4 @@
-// Python AgentCredential.supported_models includes an explicitly configured default.
+// Gateway AgentCredential.supported_models includes an explicitly configured default.
 // An empty declaration is never a wildcard; discovery does not mutate this configuration.
 export function supportedModels(account: {
   supported_models: readonly string[]

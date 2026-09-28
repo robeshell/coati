@@ -11,7 +11,7 @@ export function environmentFallback(env: NodeJS.ProcessEnv = process.env): Envir
 
 /** ID zero is an in-memory selection sentinel, never a database account or foreign key. */
 export function environmentCandidate(config: EnvironmentFallback, requested: string, secret: string, route?: PublicRoute): Candidate {
-  const now = utcNowIso() + 'Z'
+  const now = utcNowIso()
   return {
     route: {
       id: route?.id ?? 0, model: requested, upstream_id: 0, upstream_model: config.model,

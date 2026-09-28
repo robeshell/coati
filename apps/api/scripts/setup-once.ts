@@ -1,5 +1,5 @@
 /**
- * Container-concurrency-safe initialization: DB migrations + RBAC sync
+ * Container-concurrency-safe initialization: DB migrations + RBAC sync + AI SQL read-only account
  *
  * When multiple replicas start at once, a PostgreSQL advisory lock ensures only one instance runs the init;
  * the others wait on the lock; once the first finishes, each waiting instance acquires the lock, runs (idempotently) and releases it.
@@ -13,6 +13,7 @@
 import pg from 'pg'
 import { loadConfig, loadEnvFiles, type AppEnv } from '../src/config'
 import { runMigrations } from '../src/db/migrate'
+import { initRoRole } from './init-ro-role'
 import { seedRbac } from './seed-rbac'
 
 /** "CKIT" */
@@ -21,6 +22,11 @@ export const ADVISORY_LOCK_KEY = 0x434b4954
 export interface SetupOnceOptions {
   databaseUrl: string
   adminPassword: string
+  roPassword: string
+  /** Read-only role name, defaults to castor_kit_ro (overridden only by tests) */
+  roRoleName?: string
+  /** DEMO_MODE: restore the demo data when it is due (first start or older than resetHours) */
+  demo?: { resetHours: number }
   log?: (msg: string) => void
 }
 
@@ -31,13 +37,13 @@ export async function runSetupOnce(options: SetupOnceOptions): Promise<void> {
   await lockClient.connect()
   try {
     await lockClient.query(`SELECT pg_advisory_lock(${ADVISORY_LOCK_KEY})`)
-    log('[setup] 已获取初始化锁（并发安全）')
+    log('[setup] Acquired the setup lock (safe to run concurrently)')
 
-    log('[setup] 运行数据库迁移...')
+    log('[setup] Running database migrations...')
     await runMigrations(options.databaseUrl, log)
-    log('[setup] 数据库迁移完成')
+    log('[setup] Database migrations done')
 
-    log('[setup] 同步 RBAC 菜单与权限...')
+    log('[setup] Syncing RBAC menus and permissions...')
     await seedRbac({
       databaseUrl: options.databaseUrl,
       adminPassword: options.adminPassword,
@@ -45,12 +51,19 @@ export async function runSetupOnce(options: SetupOnceOptions): Promise<void> {
       log,
     })
 
+    log('[setup] Setting up the read-only AI SQL role...')
+    await initRoRole({
+      databaseUrl: options.databaseUrl,
+      roPassword: options.roPassword,
+      roleName: options.roRoleName,
+      log,
+    })
 
   } finally {
     // Closing the connection releases the session-level lock; unlock explicitly first, ignoring errors if the connection is already gone
     await lockClient.query(`SELECT pg_advisory_unlock(${ADVISORY_LOCK_KEY})`).catch(() => {})
     await lockClient.end().catch(() => {})
-    log('[setup] 初始化完成，已释放锁')
+    log('[setup] Setup complete; lock released')
   }
 }
 
@@ -63,6 +76,8 @@ if (isMain) {
   runSetupOnce({
     databaseUrl: config.databaseUrl,
     adminPassword: config.adminPassword,
+    roPassword: config.postgresRoPassword,
+    demo: config.demoMode ? { resetHours: config.demoResetHours } : undefined,
   }).catch((err: unknown) => {
     console.error(err)
     process.exit(1)

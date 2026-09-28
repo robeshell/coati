@@ -20,7 +20,7 @@ export function assertAnthropicOpaqueContent(raw: unknown): void {
 
 export type ReasoningPolicy = 'preserve' | 'text-only'
 export interface BridgeOptions {
-  compatibilityPolicy?: 'python' | 'strict'
+  compatibilityPolicy?: 'standard' | 'strict'
   reasoningPolicy?: ReasoningPolicy
 }
 /** Chat has no portable opaque reasoning field; text-only is an explicit lossy choice. */

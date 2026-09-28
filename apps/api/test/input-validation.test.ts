@@ -1,0 +1,107 @@
+/**
+ * Bad input is the caller's error: 400 with a readable message, never a 500. Covers the global mapping of database
+ * input errors (common/db-errors.ts via the error handler), request bodies declared with common/validation.ts,
+ * invalidInput() for values of the wrong type or shape, and the per-module rules added alongside.
+ */
+
+import type { FastifyInstance } from 'fastify'
+import { like } from 'drizzle-orm'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { DbHandle } from '@/db/client'
+import { announcements, demo_records, dict_types, menus, notifications, roles } from '@/db/schema'
+import { buildTestApp, FIXTURE_PREFIX, openTestDb, superAdminSession, type AuthedSession } from './helpers'
+
+const P = `${FIXTURE_PREFIX}iv_`
+const CC = '/api/admin/component-center'
+let app: FastifyInstance
+let handle: DbHandle
+let s: AuthedSession
+
+beforeAll(async () => {
+  handle = openTestDb()
+  app = await buildTestApp()
+  s = await superAdminSession(app, handle)
+})
+
+afterAll(async () => {
+  await handle.db.delete(roles).where(like(roles.code, `${P}%`))
+  await handle.db.delete(menus).where(like(menus.code, `${P}%`))
+  await handle.db.delete(dict_types).where(like(dict_types.code, `${P}%`))
+  await handle.db.delete(announcements).where(like(announcements.title, `${P}%`))
+  await handle.db.delete(notifications).where(like(notifications.title, `${P}%`))
+  await handle.db.delete(demo_records).where(like(demo_records.code, `${P}%`))
+  await app.close()
+  await handle.pool.end()
+})
+
+const send = async (method: string, url: string, payload?: unknown) => {
+  const res = await s.inject({ method: method as 'POST', url, ...(payload !== undefined ? { payload: payload as object } : {}) })
+  return [res.statusCode, res.json()] as const
+}
+const bad = (error: string) => [400, { error }] as const
+
+describe('bad input → 400', () => {
+  it('values of the wrong type or shape: 「请求参数格式不正确」', async () => {
+    const cases: Array<[string, string, unknown]> = [
+      ['PUT', `${CC}/demo-records/reorder`, [5]],
+    ]
+    for (const [method, url, payload] of cases) {
+      expect(await send(method, url, payload), `${method} ${url} ${JSON.stringify(payload)}`).toEqual(bad('请求参数格式不正确'))
+    }
+  })
+
+  it('modules declaring their body with common/validation.ts: 「<field>的值无效」', async () => {
+    expect(await send('POST', '/api/admin/dicts', { name: 'x', code: `${P}d1`, is_active: 'abc' })).toEqual(bad('是否启用的值无效'))
+    expect(await send('POST', '/api/admin/dicts', { name: 'x', code: `${P}d2`, sort_order: 'abc' })).toEqual(bad('排序的值无效'))
+    expect(await send('POST', '/api/admin/dicts', [1])).toEqual(bad('请求参数格式不正确'))
+    expect(await send('POST', '/api/admin/announcements', { title: `${P}a`, content: 'c', sort_order: 'abc' })).toEqual(bad('排序权重的值无效'))
+    expect(await send('POST', '/api/admin/menus', { name: 'x', code: 5 })).toEqual(bad('菜单编码的值无效'))
+    expect(await send('POST', `${CC}/demo-records/export`, { ids: ['a'] })).toEqual(bad('导出记录的值无效'))
+    expect(await send('POST', `${CC}/demo-records/batch-delete`, { ids: [true] })).toEqual(bad('记录的值无效'))
+    expect(await send('POST', `${CC}/ai/sql/generate`, { question: 5 })).toEqual(bad('问题的值无效'))
+    expect(await send('POST', `${CC}/ai/sql/execute`, { sql: 5 })).toEqual(bad('SQL的值无效'))
+    expect(await send('POST', `${CC}/ai/prompt/templates`, { name: 5, content: 'x' })).toEqual(bad('模板名称的值无效'))
+    expect(await send('POST', `${CC}/ai/prompt/preview`, { content: 5 })).toEqual(bad('模板内容的值无效'))
+  })
+
+  it('body checks run after authentication: a signed-out caller gets 401, not 400', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/admin/change-password', payload: { old_password: 5 } })
+    expect(res.statusCode).toBe(401)
+    expect(await send('POST', '/api/admin/change-password', { old_password: 5, new_password: 'x' })).toEqual(bad('旧密码的值无效'))
+  })
+
+  it('the database rejecting a value: a readable message instead of a 500', async () => {
+    expect(await send('POST', '/api/admin/dicts', { name: 'x', code: 'x'.repeat(300) })).toEqual(bad('有字段超出了长度上限，请缩短后再保存'))
+    expect(await send('POST', '/api/admin/announcements', { title: `${P}${'x'.repeat(300)}`, content: 'c' })).toEqual(bad('有字段超出了长度上限，请缩短后再保存'))
+    expect(await send('POST', '/api/admin/menus', { name: 'x', code: `${P}m1`, parent_id: 99999999 })).toEqual(bad('关联的数据不存在，或这条数据仍被其他数据使用，请检查关联后重试'))
+    expect(await send('POST', `${CC}/demo-records`, { name: 'x'.repeat(300), code: `${P}long` })).toEqual(bad('有字段超出了长度上限，请缩短后再保存'))
+  })
+
+  it('module rules: roles, users, announcements, menus, notifications, demo record dates', async () => {
+    const [, existing] = await send('GET', '/api/admin/roles')
+    const [created, role] = await send('POST', '/api/admin/roles', { name: 'x', code: `${P}r1` })
+    expect(created).toBe(201)
+    expect(await send('PUT', `/api/admin/roles/${role.id}`, { code: (existing as Array<{ code: string }>)[0]!.code })).toEqual(bad('角色编码已存在'))
+    expect(await send('PUT', `/api/admin/roles/${role.id}`, { name: '' })).toEqual(bad('角色名称不能为空'))
+    expect(await send('PUT', `/api/admin/roles/${role.id}`, { name: null })).toEqual(bad('角色名称不能为空'))
+    expect(await send('PUT', `/api/admin/roles/${role.id}`, { code: 5 })).toEqual(bad('角色编码的值无效'))
+
+    expect(await send('POST', '/api/admin/users', { username: `${P}u`, password: 'abcdef1', role_ids: 'x' })).toEqual(bad('角色的值无效'))
+
+    expect(await send('POST', '/api/admin/announcements', { title: `${P}a`, content: 'c', announce_type: 'zzz' })).toEqual(
+      bad('公告类型只能是 system、activity 或 update'),
+    )
+    expect(await send('POST', '/api/admin/announcements', { title: `${P}a`, content: 'c', status: 'zzz' })).toEqual(bad('状态只能是 draft 或 published'))
+
+    expect(await send('POST', '/api/admin/menus', { name: 'x', code: `${P}m2`, menu_type: 'zzz' })).toEqual(bad('菜单类型只能是 directory、menu 或 button'))
+
+    expect(await send('POST', '/api/admin/notifications', { title: `${P}n`, is_global: false })).toEqual(bad('请选择接收通知的用户'))
+    expect(await send('POST', '/api/admin/notifications', { title: `${P}n`, is_global: false, user_id: 99999999 })).toEqual(bad('接收通知的用户不存在'))
+
+    const dates = { name: 'x', code: `${P}dates`, start_date: '2026-02-01', end_date: '2026-01-01' }
+    expect(await send('POST', `${CC}/demo-records`, dates)).toEqual(bad('开始日期不能晚于结束日期'))
+    const [, record] = await send('POST', `${CC}/demo-records`, { ...dates, end_date: '2026-02-05' })
+    expect(await send('PUT', `${CC}/demo-records/${record.id}`, { end_date: '2026-01-31' })).toEqual(bad('开始日期不能晚于结束日期'))
+    await send('DELETE', `${CC}/demo-records/${record.id}`)
+  })
+})

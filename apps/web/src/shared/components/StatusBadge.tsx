@@ -1,0 +1,61 @@
+import type { ReactNode } from 'react'
+import { useTx } from '@/i18n'
+import { cn } from '@/lib/utils'
+
+export type StatusTone = 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'danger'
+
+const TONES: Record<StatusTone, string> = {
+  neutral: 'bg-muted text-muted-foreground',
+  brand: 'bg-brand-soft text-primary',
+  info: 'bg-info-soft text-info',
+  success: 'bg-success-soft text-success',
+  warning: 'bg-warning-soft text-warning',
+  danger: 'bg-danger-soft text-danger',
+}
+const DOTS: Record<StatusTone, string> = {
+  neutral: 'bg-muted-foreground/60',
+  brand: 'bg-primary',
+  info: 'bg-info',
+  success: 'bg-success',
+  warning: 'bg-warning',
+  danger: 'bg-danger',
+}
+
+/**
+ * Status badge. tone: neutral | brand | info | success | warning | danger
+ *   <StatusBadge tone="success" dot>{t('启用')}</StatusBadge>
+ *   <StatusBadge tone="neutral" variant="plain" dot>{t('草稿')}</StatusBadge>  // dot + text only
+ */
+export interface StatusBadgeProps {
+  tone?: StatusTone
+  dot?: boolean
+  /** soft: tinted pill; plain: dot + text only */
+  variant?: 'soft' | 'plain'
+  className?: string
+  /** Chinese source text (translated here) or a node */
+  children?: ReactNode
+}
+
+export default function StatusBadge({ tone = 'neutral', dot = false, variant = 'soft', className, children }: StatusBadgeProps) {
+  const tx = useTx()
+  if (variant === 'plain') {
+    return (
+      <span className={cn('text-muted-foreground inline-flex items-center gap-1.5 text-xs', className)}>
+        <span className={cn('size-1.5 rounded-full', DOTS[tone])} />
+        {tx(children)}
+      </span>
+    )
+  }
+  return (
+    <span
+      className={cn(
+        'inline-flex h-5 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium whitespace-nowrap',
+        TONES[tone],
+        className,
+      )}
+    >
+      {dot ? <span className={cn('size-1.5 rounded-full', DOTS[tone])} /> : null}
+      {tx(children)}
+    </span>
+  )
+}

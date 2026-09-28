@@ -1,59 +1,16 @@
-# 环境变量（.env.* 忽略，模板文件放行）
-.env.*
-!portal/.env.example
-!.env.example
-!.env.docker.example
-
-# 虚拟环境
-venv/
-.venv/
-
-# Python
-__pycache__/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-*.py[cod]
-*.egg-info/
+# Dependencies and build outputs
+node_modules/
 dist/
 build/
-
-# 前端 / 构建缓存（node_modules 全局匹配）
-node_modules/
-
+.turbo/
 *.tsbuildinfo
+*.config.ts.timestamp-*.mjs
 .eslintcache
-.stylelintcache
-.parcel-cache/
+.vitest/
 .vite/
+coverage/
 
-# 日志
-/logs/
-*.log
-
-# 数据库
-instance/
-*.db
-*.sqlite3
-
-# IDE / 编辑器（.cursor/rules 需提交，只忽略本地配置）
-.vscode/
-.idea/
-.cursor/settings.json
-
-# macOS
-.DS_Store
-*.swp
-
-# Claude — skills 提交到 git，个人本地配置忽略
-.claude/settings.local.json
-.claude/worktrees/
-
-# Local credentials and release artifacts
+# Local configuration and secrets
 .env
 .env.*
 !**/.env.example
@@ -63,40 +20,28 @@ instance/
 *.p12
 *.pfx
 *.tgz
-/desktop/
-/portal/instance/
 
-# Client implementations are maintained outside this repository.
-/cli/
-/plugins/
-
-# Node rewrite
-# deps / build
-node_modules/
-dist/
-.turbo/
-*.tsbuildinfo
-
-# env
-.env
-.env.*
-!.env.example
-
-# runtime
+# Runtime data
 instance/
-# Ignore only runtime log dirs; a bare logs/ would also match source dirs such as src/modules/admin/logs
 /logs/
 /apps/*/logs/
 *.log
+*.db
+*.sqlite3
 
-# tooling
+# Local editor files
 .DS_Store
+*.swp
 .vscode/
 .idea/
-coverage/
-.vitest/
-.vite/
+.cursor/settings.json
+.claude/settings.local.json
+.claude/worktrees/
 
-# Docs site build output
+# Separately maintained clients
+/desktop/
+/cli/
+/plugins/
+
 website/.vitepress/cache/
 website/.vitepress/dist/

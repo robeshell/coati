@@ -3,7 +3,7 @@ import { eq, inArray, like } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { DbHandle } from '@/db/client'
-import { menus, role_menus, roles } from '@/db/schema'
+import { departments, menus, role_menus, roles } from '@/db/schema'
 import {
   buildTestApp,
   cleanupFixture,
@@ -72,72 +72,70 @@ describe('roles 列表 / 新增', () => {
     const body = res.json()
     expect(Array.isArray(body)).toBe(true)
     const superRole = body.find((r: { code: string }) => r.code === 'super_admin')
-    expect(Object.keys(superRole).sort()).toEqual(['code', 'created_at', 'description', 'id', 'menu_ids', 'menus', 'name'])
+    expect(Object.keys(superRole).sort()).toEqual([
+      'code', 'created_at', 'data_scope', 'dept_ids', 'description', 'id', 'menu_ids', 'menus', 'name',
+    ])
     expect(Object.keys(superRole.menus[0]).sort()).toEqual(['code', 'id', 'menu_type', 'name', 'parent_id'])
-    expect(superRole.created_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{6})?$/)
+    expect(superRole.created_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/)
   })
 
-  it('新增 → 201，menu_ids 可以是 dict（取键）/数字字符串，无效 id 忽略', async () => {
+  it('新增 → 201，文本去空白，不存在的菜单 id 忽略', async () => {
     const res = await s.inject({
       method: 'POST',
       url: '/api/admin/roles',
-      payload: { name: '测试角色', code: `${P}a`, description: 5, menu_ids: [menuA, String(menuB), ` ${menuC} `, 99999999999, 1.5, null] },
+      payload: { name: ' 测试角色 ', code: `${P}a`, description: ' 说明 ', menu_ids: [menuA, menuB, menuC, menuB, 99999999] },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json()
-    expect(body).toMatchObject({ name: '测试角色', code: `${P}a`, description: '5' })
+    expect(body).toMatchObject({ name: '测试角色', code: `${P}a`, description: '说明' })
     // (sort_order, id): B(10) < C(10, larger id) < A(30)
     expect(body.menu_ids).toEqual([menuB, menuC, menuA])
 
-    const dict = await s.inject({ method: 'POST', url: '/api/admin/roles', payload: { name: ['x', 'y z'], code: `${P}b`, menu_ids: { [menuA]: true } } })
-    expect(dict.statusCode).toBe(201)
-    expect(dict.json()).toMatchObject({ name: '{x,"y z"}', menu_ids: [menuA], description: null })
+    const second = await s.inject({ method: 'POST', url: '/api/admin/roles', payload: { name: 'b', code: `${P}b`, menu_ids: [menuA] } })
+    expect(second.statusCode).toBe(201)
+    expect(second.json()).toMatchObject({ menu_ids: [menuA], description: null })
 
     const noMenus = await s.inject({ method: 'POST', url: '/api/admin/roles', payload: { name: 'n', code: `${P}c` } })
     expect(noMenus.json()).toMatchObject({ menu_ids: [], menus: [] })
   })
 
-  it('新增校验：缺名称 / 缺编码 / 编码重复 / 非法类型 → 500', async () => {
+  it('新增校验：缺名称 / 缺编码 / 编码重复 / 类型不符 → 400', async () => {
     const post = (payload: unknown) => s.inject({ method: 'POST', url: '/api/admin/roles', payload: payload as object })
     expect((await post({ code: 'x' })).json()).toEqual({ error: '角色名称不能为空' })
-    expect((await post({ name: 'x', code: 0 })).json()).toEqual({ error: '角色编码不能为空' })
+    expect((await post({ name: 'x', code: ' ' })).json()).toEqual({ error: '角色编码不能为空' })
     expect((await post({})).json()).toEqual({ error: '角色名称不能为空' })
     const dup = await post({ name: 'x', code: `${P}a` })
     expect(dup.statusCode).toBe(400)
     expect(dup.json()).toEqual({ error: '角色编码已存在' })
 
-    const internal = { error: '服务器内部错误，请稍后重试' }
-    for (const payload of [
-      { name: 'x', code: 5 },
-      { name: 'x', code: `${P}z`, menu_ids: 5 },
-      { name: 'x', code: `${P}z`, menu_ids: 'abc' },
-      { name: 'x', code: `${P}z`, menu_ids: ['abc'] },
-      { name: 'x', code: `${P}z`, menu_ids: [true] },
-      { name: 'x', code: `${P}z`, menu_ids: [[1]] },
-      { name: 'x', code: `${P}z`, description: { a: 1 } },
-    ]) {
+    const cases: Array<[object, string]> = [
+      [{ name: 'x', code: 5 }, '角色编码的值无效'],
+      [{ name: ['x'], code: `${P}z` }, '角色名称的值无效'],
+      [{ name: 'x', code: `${P}z`, description: 5 }, '描述的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: 5 }, '菜单的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: { 1: true } }, '菜单的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: [String(menuA)] }, '菜单的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: [true] }, '菜单的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: [1.5] }, '菜单的值无效'],
+      [{ name: 'x', code: `${P}z`, menu_ids: [99999999999] }, '菜单的值无效'],
+    ]
+    for (const [payload, error] of cases) {
       const res = await post(payload)
-      expect(res.statusCode, JSON.stringify(payload)).toBe(500)
-      expect(res.json()).toEqual(internal)
+      expect([res.statusCode, res.json()], JSON.stringify(payload)).toEqual([400, { error }])
     }
     expect(await handle.db.select().from(roles).where(eq(roles.code, `${P}z`))).toHaveLength(0)
   })
 
-  it('请求体不是对象：真值 → 500，假值当作 {}', async () => {
+  it('请求体不是对象 → 400；null 当作 {}', async () => {
     const json = { 'content-type': 'application/json' }
     const post = (payload: unknown) => s.inject({ method: 'POST', url: '/api/admin/roles', payload: JSON.stringify(payload), headers: json })
-    expect((await post([1, 2])).statusCode).toBe(500)
-    expect((await post('abc')).statusCode).toBe(500)
-    expect((await post([])).json()).toEqual({ error: '角色名称不能为空' })
-    expect((await post(0)).json()).toEqual({ error: '角色名称不能为空' })
+    for (const payload of [[1, 2], [], 'abc', 0]) expect((await post(payload)).json()).toEqual({ error: '请求参数格式不正确' })
+    expect((await post(null)).json()).toEqual({ error: '角色名称不能为空' })
     const role = await roleByCode(`${P}a`)
-    // update_role only uses `'key' in data`: a list always yields False → returned unchanged
     const put = (payload: unknown) =>
       s.inject({ method: 'PUT', url: `/api/admin/roles/${role.id}`, payload: JSON.stringify(payload), headers: json })
-    expect((await put([1])).json()).toMatchObject({ id: role.id, code: `${P}a` })
-    expect((await put('xyz')).json()).toMatchObject({ id: role.id })
-    expect((await put('has name')).statusCode).toBe(500)
-    expect((await put(5)).statusCode).toBe(500)
+    for (const payload of [[1], 'xyz', 5]) expect((await put(payload)).json()).toEqual({ error: '请求参数格式不正确' })
+    expect((await put(null)).json()).toMatchObject({ id: role.id, code: `${P}a` })
   })
 })
 
@@ -155,22 +153,22 @@ describe('roles 编辑 / 删除', () => {
     expect(clear.json().menu_ids).toEqual([])
   })
 
-  it('编辑失败整体回滚：编码冲突 / name=null → 500', async () => {
+  it('编辑失败整体回滚：编码冲突 / name=null → 400', async () => {
     const role = await roleByCode(`${P}a`)
     await s.inject({ method: 'PUT', url: `/api/admin/roles/${role.id}`, payload: { menu_ids: [menuA] } })
     const conflict = await s.inject({ method: 'PUT', url: `/api/admin/roles/${role.id}`, payload: { code: `${P}b`, menu_ids: [menuB] } })
-    expect(conflict.statusCode).toBe(500)
-    expect(conflict.json()).toEqual({ error: '服务器内部错误，请稍后重试' })
+    expect(conflict.statusCode).toBe(400)
+    expect(conflict.json()).toEqual({ error: expect.not.stringContaining('服务器内部错误') })
     const nullName = await s.inject({ method: 'PUT', url: `/api/admin/roles/${role.id}`, payload: { name: null } })
-    expect(nullName.statusCode).toBe(500)
+    expect(nullName.json()).toEqual({ error: '角色名称不能为空' })
     expect((await roleByCode(`${P}a`)).name).toBe('改名')
     expect(await menuIdsOf(role.id)).toEqual([menuA])
   })
 
-  it('404 先于权限；非数字 id → 405', async () => {
+  it('权限先于 404；非数字 id → 405', async () => {
     expect((await s.inject({ method: 'PUT', url: '/api/admin/roles/99999999', payload: {} })).json()).toEqual({ error: '资源不存在' })
-    expect((await u.inject({ method: 'PUT', url: '/api/admin/roles/99999999', payload: {} })).statusCode).toBe(404)
-    expect((await u.inject({ method: 'DELETE', url: '/api/admin/roles/99999999' })).statusCode).toBe(404)
+    expect((await u.inject({ method: 'PUT', url: '/api/admin/roles/99999999', payload: {} })).statusCode).toBe(403)
+    expect((await u.inject({ method: 'DELETE', url: '/api/admin/roles/99999999' })).statusCode).toBe(403)
     expect((await s.inject({ method: 'PUT', url: '/api/admin/roles/abc', payload: {} })).statusCode).toBe(405)
     expect((await s.inject({ url: '/api/admin/roles/1' })).statusCode).toBe(404)
   })
@@ -188,7 +186,7 @@ describe('roles 编辑 / 删除', () => {
 describe('roles 导出 / 模板 / 导入', () => {
   it('导出：未勾选 400；ids 非 list 400；选中 csv 精确字节', async () => {
     expect((await s.inject({ method: 'POST', url: '/api/admin/roles/export', payload: {} })).json()).toEqual({ error: '请先勾选要导出的角色数据' })
-    expect((await s.inject({ method: 'POST', url: '/api/admin/roles/export', payload: { ids: { a: 1 } } })).statusCode).toBe(400)
+    expect((await s.inject({ method: 'POST', url: '/api/admin/roles/export', payload: { ids: { a: 1 } } })).json()).toEqual({ error: '导出记录的值无效' })
 
     const role = await roleByCode(`${P}a`)
     const res = await s.inject({
@@ -201,33 +199,43 @@ describe('roles 导出 / 模板 / 导入', () => {
     expect(res.body).toBe(`\ufeff角色编码,角色名称,描述,菜单编码\r\n${P}a,改名,,${P}ma\r\n`)
   })
 
-  it('导出 filtered：search 匹配名称或编码；fields 为字符串时按字符迭代 → 全部字段', async () => {
+  it('导出 filtered：search 匹配名称或编码；不传 fields → 全部字段', async () => {
     const res = await s.inject({
       method: 'POST',
       url: '/api/admin/roles/export',
-      payload: { export_mode: 'filtered', filters: { search: `${P}C` }, fields: 'code', file_type: 'xlsx' },
+      payload: { export_mode: 'filtered', filters: { search: `${P}C` }, file_type: 'xlsx' },
     })
     expect(res.headers['content-disposition']).toBe('attachment; filename=roles_export.xlsx')
     const wb = new ExcelJS.Workbook()
     await wb.xlsx.load(res.rawPayload as unknown as ArrayBuffer)
     const rows: unknown[][] = []
     wb.worksheets[0]!.eachRow((row) => rows.push((row.values as unknown[]).slice(1)))
-    expect(rows[0]).toEqual(['ID', '角色名称', '角色编码', '描述', '菜单编码', '菜单名称', '创建时间'])
+    expect(rows[0]).toEqual(['ID', '角色名称', '角色编码', '描述', '数据范围', '部门编码', '菜单编码', '菜单名称', '创建时间'])
     expect(rows).toHaveLength(2)
     expect(rows[1]![2]).toBe(`${P}c`)
-    expect(String(rows[1]![6])).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/)
+    expect(rows[1]![4]).toBe('全部数据')
+    expect(String(rows[1]![8])).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/)
   })
 
-  it('导出：非法参数 → 500', async () => {
-    for (const payload of [{ export_mode: 1 }, { export_mode: 'filtered', filters: [1] }, { ids: [1], fields: 5 }, { ids: [1], fields: [[1]] }, { ids: ['x'] }]) {
-      expect((await s.inject({ method: 'POST', url: '/api/admin/roles/export', payload })).statusCode, JSON.stringify(payload)).toBe(500)
+  it('导出：非法参数 → 400', async () => {
+    const cases: Array<[object, string]> = [
+      [{ export_mode: 1 }, '导出范围的值无效'],
+      [{ export_mode: 'filtered', filters: [1] }, '筛选条件的值无效'],
+      [{ export_mode: 'filtered', filters: { search: 5 } }, '搜索的值无效'],
+      [{ ids: [1], fields: 'code' }, '导出字段的值无效'],
+      [{ ids: [1], fields: [[1]] }, '导出字段的值无效'],
+      [{ ids: ['x'] }, '导出记录的值无效'],
+    ]
+    for (const [payload, error] of cases) {
+      const res = await s.inject({ method: 'POST', url: '/api/admin/roles/export', payload })
+      expect([res.statusCode, res.json()], JSON.stringify(payload)).toEqual([400, { error }])
     }
   })
 
   it('模板 csv 精确字节 / xlsx', async () => {
     const csv = await s.inject({ url: '/api/admin/roles/template?file_type=xls' })
     expect(csv.headers['content-disposition']).toBe('attachment; filename=roles_import_template.csv')
-    expect(csv.body).toBe('\ufeff角色名称,角色编码,描述,菜单编码\r\n示例角色,demo_role,示例描述,"dashboard,system_users"\r\n')
+    expect(csv.body).toBe('\ufeff角色名称,角色编码,描述,数据范围,部门编码,菜单编码\r\n示例角色,demo_role,示例描述,全部数据,,"dashboard,system_users"\r\n')
     const xlsx = await s.inject({ url: '/api/admin/roles/template?file_type=xlsx' })
     expect(xlsx.headers['content-disposition']).toBe('attachment; filename=roles_import_template.xlsx')
     expect(xlsx.rawPayload.subarray(0, 2).toString()).toBe('PK')
@@ -275,12 +283,107 @@ describe('roles 导出 / 模板 / 导入', () => {
   })
 })
 
+describe('roles 数据范围', () => {
+  it('自定义部门：保存 dept_ids；切到其他范围时清空；取值 / 部门校验', async () => {
+    const [dept] = await handle.db.insert(departments).values({ name: 'r1 部门', code: `${P}dept` }).returning()
+    const created = await s.inject({
+      method: 'POST',
+      url: '/api/admin/roles',
+      payload: { name: 'scoped', code: `${P}scoped`, data_scope: 'custom', dept_ids: [dept!.id] },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toMatchObject({ data_scope: 'custom', dept_ids: [dept!.id] })
+    const listed = (await s.inject({ url: '/api/admin/roles' })).json().find((r: { code: string }) => r.code === `${P}scoped`)
+    expect(listed).toMatchObject({ data_scope: 'custom', dept_ids: [dept!.id] })
+
+    const id = created.json().id
+    const toDept = await s.inject({ method: 'PUT', url: `/api/admin/roles/${id}`, payload: { data_scope: 'dept' } })
+    expect(toDept.json()).toMatchObject({ data_scope: 'dept', dept_ids: [] })
+
+    const put = (payload: Record<string, unknown>) => s.inject({ method: 'PUT', url: `/api/admin/roles/${id}`, payload })
+    expect((await put({ data_scope: 'everything' })).json()).toEqual({ error: '数据范围取值不合法' })
+    expect((await put({ data_scope: 'custom', dept_ids: [99999999] })).json()).toEqual({ error: '部门不存在' })
+    expect((await put({ data_scope: 'custom', dept_ids: 'x' })).json()).toEqual({ error: '部门的值无效' })
+    // Default for new roles stays 'all'
+    const plain = await s.inject({ method: 'POST', url: '/api/admin/roles', payload: { name: 'plain', code: `${P}plain` } })
+    expect(plain.json()).toMatchObject({ data_scope: 'all', dept_ids: [] })
+
+    await handle.db.delete(roles).where(inArray(roles.code, [`${P}scoped`, `${P}plain`]))
+    await handle.db.delete(departments).where(eq(departments.id, dept!.id))
+  })
+})
+
+describe('roles 导入 / 导出数据范围', () => {
+  it('导入：按名称或编码识别数据范围，自定义部门按部门编码关联；取值 / 部门编码校验；导出带数据范围与部门编码', async () => {
+    const [dept] = await handle.db.insert(departments).values({ name: 'r1 导入部门', code: `${P}idept` }).returning()
+    const csv = (rows: string[]) => multipartFile('r.csv', ['角色名称,角色编码,描述,数据范围,部门编码,菜单编码', ...rows].join('\n') + '\n')
+
+    const bad = await s.inject({
+      method: 'POST',
+      url: '/api/admin/roles/import',
+      ...csv([`甲,${P}i1,,全公司,,`, `乙,${P}i2,,自定义部门,${P}nope,`]),
+    })
+    expect(bad.json().error_rows.map((r: { line: number; reason: string }) => [r.line, r.reason])).toEqual([
+      [2, '数据范围取值不合法（可填 全部数据 / 本部门及下级 / 本部门 / 仅本人 / 自定义部门）'],
+      [3, `部门编码不存在: ${P}nope`],
+    ])
+
+    const ok = await s.inject({
+      method: 'POST',
+      url: '/api/admin/roles/import',
+      ...csv([`甲,${P}i1,,本部门及下级,,`, `乙,${P}i2,,custom,${P}idept,`, `丙,${P}i3,,,,`]),
+    })
+    expect(ok.json()).toEqual({ message: '导入成功', created: 3, updated: 0 })
+    const listed = (await s.inject({ url: '/api/admin/roles' })).json() as { id: number; code: string; data_scope: string; dept_ids: number[] }[]
+    const byCode = Object.fromEntries(listed.map((r) => [r.code, r]))
+    expect(byCode[`${P}i1`]).toMatchObject({ data_scope: 'dept_and_children', dept_ids: [] })
+    expect(byCode[`${P}i2`]).toMatchObject({ data_scope: 'custom', dept_ids: [dept!.id] })
+    expect(byCode[`${P}i3`]).toMatchObject({ data_scope: 'all' })
+
+    const superRow = await s.inject({ method: 'POST', url: '/api/admin/roles/import', ...csv(['超级管理员,super_admin,,仅本人,,']) })
+    expect(superRow.json().error_rows.map((r: { reason: string }) => r.reason)).toEqual(['超级管理员角色的数据范围固定为全部数据'])
+
+    const exported = await s.inject({
+      method: 'POST',
+      url: '/api/admin/roles/export',
+      payload: { ids: [byCode[`${P}i2`]!.id], fields: ['code', 'data_scope', 'dept_codes'] },
+    })
+    expect(exported.body).toBe(`\ufeff角色编码,数据范围,部门编码\r\n${P}i2,自定义部门,${P}idept\r\n`)
+
+    await handle.db.delete(roles).where(inArray(roles.code, [`${P}i1`, `${P}i2`, `${P}i3`]))
+    await handle.db.delete(departments).where(eq(departments.id, dept!.id))
+  })
+})
+
+describe('roles 超级管理员角色保护', () => {
+  it('不能删除、改编码、改数据范围、减少菜单；名称 / 描述可改', async () => {
+    const [superRole] = await handle.db.select().from(roles).where(eq(roles.code, 'super_admin'))
+    const url = `/api/admin/roles/${superRole!.id}`
+    const put = (payload: Record<string, unknown>) => s.inject({ method: 'PUT', url, payload })
+    expect((await s.inject({ method: 'DELETE', url })).json()).toEqual({ error: '超级管理员角色不能删除' })
+    expect((await put({ code: 'renamed' })).json()).toEqual({ error: '超级管理员角色的编码不能修改' })
+    expect((await put({ data_scope: 'self' })).json()).toEqual({ error: '超级管理员角色的数据范围固定为全部数据' })
+    expect((await put({ menu_ids: [] })).json()).toEqual({ error: '超级管理员角色的菜单权限固定为全部，不能修改' })
+
+    // Re-sending the full menu set / same code / 'all' is fine, and name + description stay editable
+    const allMenus = (await handle.db.select({ id: menus.id }).from(menus)).map((m) => m.id)
+    const ok = await put({ code: 'super_admin', data_scope: 'all', menu_ids: allMenus, description: '改过的描述' })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json()).toMatchObject({ code: 'super_admin', data_scope: 'all', description: '改过的描述' })
+    await put({ description: superRole!.description })
+
+    const file = multipartFile('r.csv', `角色名称,角色编码,描述,菜单编码\n超级管理员,super_admin,,dashboard\n`)
+    const imported = await s.inject({ method: 'POST', url: '/api/admin/roles/import', ...file })
+    expect(imported.json().error_rows.map((r: { reason: string }) => r.reason)).toEqual(['超级管理员角色的菜单权限固定为全部，不能修改'])
+  })
+})
+
 describe('roles 权限', () => {
   it('无权限用户 → 403 文案', async () => {
     const role = await roleByCode(`${P}a`)
     const cases: [string, string, string][] = [
       ['GET', '/api/admin/roles', '无权限查看角色列表'],
-      ['POST', '/api/admin/roles', '无权限新增角色'],
+      ['POST', '/api/admin/roles', '无权限新建角色'],
       ['PUT', `/api/admin/roles/${role.id}`, '无权限编辑角色'],
       ['DELETE', `/api/admin/roles/${role.id}`, '无权限删除角色'],
       ['POST', '/api/admin/roles/export', '无权限导出角色'],

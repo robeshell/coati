@@ -4,20 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { generatePasswordHash } from '@/common/password'
 import type { DbHandle } from '@/db/client'
 import { admin_users, notification_reads, notifications } from '@/db/schema'
-import {
-  buildTestApp,
-  cleanupFixture,
-  createFixture,
-  FIXTURE_PASSWORD,
-  FIXTURE_USER,
-  loginSession,
-  openTestDb,
-  superAdminSession,
-  type AuthedSession,
-} from './helpers'
+import { type AuthedSession, buildTestApp, cleanupFixture, createFixture, FAST_HASH, FIXTURE_PASSWORD, FIXTURE_USER, loginSession, openTestDb, superAdminSession } from './helpers'
 
 const P = 'ck_test_r2_t_'
-const INTERNAL = { error: '服务器内部错误，请稍后重试' }
 let app: FastifyInstance
 let handle: DbHandle
 let s: AuthedSession
@@ -63,11 +52,11 @@ describe('notification', () => {
   let toFixtureId: number
   let toSuperId: number
 
-  it('新增：201 形状；noti_type 非法 → info；is_global 按 Python 真值；非全局才取 user_id', async () => {
+  it('新增：201 形状；缺省 noti_type → info、is_global → true；非全局才取 user_id', async () => {
     const g = await s.inject({
       method: 'POST',
       url: '/api/admin/notifications',
-      payload: { title: `  ${P}全局  `, noti_type: 'bogus', content: null, link: '', user_id: fixtureUserId },
+      payload: { title: `  ${P}全局  `, content: null, link: '', user_id: fixtureUserId },
     })
     expect(g.statusCode).toBe(201)
     expect(Object.keys(g.json()).sort()).toEqual(
@@ -87,7 +76,7 @@ describe('notification', () => {
     const t = await s.inject({
       method: 'POST',
       url: '/api/admin/notifications',
-      payload: { title: `${P}给夹具`, noti_type: 'warning', is_global: '', user_id: String(fixtureUserId), link: '/x' },
+      payload: { title: `${P}给夹具`, noti_type: 'warning', is_global: false, user_id: fixtureUserId, link: '/x' },
     })
     expect(t.json()).toMatchObject({ is_global: false, user_id: fixtureUserId, noti_type: 'warning', link: '/x' })
     toFixtureId = t.json().id
@@ -95,19 +84,27 @@ describe('notification', () => {
     const t2 = await s.inject({
       method: 'POST',
       url: '/api/admin/notifications',
-      payload: { title: `${P}给超管`, is_global: 0, user_id: s.userId, noti_type: 'error' },
+      payload: { title: `${P}给超管`, is_global: false, user_id: s.userId, noti_type: 'error' },
     })
     toSuperId = t2.json().id
   })
 
-  it('新增校验：标题为空 400；非字符串标题/用户不存在 → 500 通用文案；无权限 403', async () => {
+  it('新增校验：标题为空 400；类型不符 / 用户不存在 → 400；无权限 403', async () => {
     const post = (session: AuthedSession, payload: object) =>
       session.inject({ method: 'POST', url: '/api/admin/notifications', payload })
     expect((await post(s, {})).json()).toEqual({ error: '标题不能为空' })
     expect((await post(s, { title: ' ' })).json()).toEqual({ error: '标题不能为空' })
-    for (const bad of [{ title: 123 }, { title: `${P}x`, is_global: false, user_id: 99999999 }, { title: `${P}x`, content: { a: 1 } }]) {
+    const cases: Array<[object, string]> = [
+      [{ title: 123 }, '标题的值无效'],
+      [{ title: `${P}x`, content: { a: 1 } }, '内容的值无效'],
+      [{ title: `${P}x`, noti_type: 'bogus' }, '通知类型的值无效'],
+      [{ title: `${P}x`, is_global: '' }, '全局通知的值无效'],
+      [{ title: `${P}x`, is_global: false, user_id: String(fixtureUserId) }, '接收用户的值无效'],
+      [{ title: `${P}x`, is_global: false, user_id: 99999999 }, '接收通知的用户不存在'],
+    ]
+    for (const [bad, error] of cases) {
       const res = await post(s, bad)
-      expect([res.statusCode, res.json()]).toEqual([500, INTERNAL])
+      expect([res.statusCode, res.json()], JSON.stringify(bad)).toEqual([400, { error }])
     }
     expect((await post(u, { title: 'x' })).json()).toEqual({ error: '无权限创建通知' })
   })
@@ -175,15 +172,15 @@ describe('notification', () => {
     expect((await s.inject({ method: 'DELETE', url: '/api/admin/notifications/abc' })).statusCode).toBe(405)
   })
 
-  it('会话用户已被删除：所有通知接口拒绝失效会话', async () => {
+  it('会话用户已被删除：所有接口 → 401 并清掉会话', async () => {
     const [ghost] = await handle.db
       .insert(admin_users)
-      .values({ username: `${P}ghost`, password_hash: await generatePasswordHash('ghost-pass', 1000) })
+      .values({ username: `${P}ghost`, password_hash: await generatePasswordHash('ghost-pass', FAST_HASH) })
       .returning()
     const g = await loginSession(app, `${P}ghost`, 'ghost-pass', ghost!.id)
     await handle.db.delete(admin_users).where(eq(admin_users.id, ghost!.id))
-    expect((await g.inject({ url: '/api/admin/notifications/unread-count' })).statusCode).toBe(401)
     for (const [method, url] of [
+      ['GET', '/api/admin/notifications/unread-count'],
       ['GET', '/api/admin/notifications'],
       ['POST', '/api/admin/notifications'],
       ['POST', '/api/admin/notifications/1/read'],
@@ -191,12 +188,12 @@ describe('notification', () => {
       ['DELETE', '/api/admin/notifications/1'],
     ] as const) {
       const res = await g.inject({ method, url, ...(method === 'POST' ? { payload: {} } : {}) })
-      expect([res.statusCode, res.json()], `${method} ${url}`).toEqual([401, { error: '未授权访问', redirect: '/admin/login' }])
+      expect([res.statusCode, res.json()], `${method} ${url}`).toEqual([401, { error: '未授权访问', redirect: '/login' }])
     }
   })
 
   it('未登录 → 401', async () => {
     const res = await app.inject({ url: '/api/admin/notifications/unread-count' })
-    expect([res.statusCode, res.json()]).toEqual([401, { error: '未授权访问', redirect: '/admin/login' }])
+    expect([res.statusCode, res.json()]).toEqual([401, { error: '未授权访问', redirect: '/login' }])
   })
 })

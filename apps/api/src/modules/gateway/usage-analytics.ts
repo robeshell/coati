@@ -1,6 +1,6 @@
 import { usageBucketIso } from './usage-bucket'
 import type { GatewayRepository } from './repository'
-import { legacyUsageFilters } from './legacy-pat'
+import { usageFilters } from './personal-access'
 import { aggregateUsage } from './usage-analytics-repository'
 import { z } from 'zod'
 function formatAnalytics(
@@ -42,7 +42,7 @@ export async function personalUsageAnalytics(
   const result = await aggregateUsage(
     repo,
     { kind: 'personal', owner },
-    legacyUsageFilters(query),
+    usageFilters(query),
   )
   return {
     ...formatAnalytics(repo, result),
@@ -72,7 +72,7 @@ export async function adminUsageAnalytics(
   repo: GatewayRepository,
   query: unknown,
 ) {
-  const filters = legacyUsageFilters(query)
+  const filters = usageFilters(query)
   const { user_id } = z
     .object({
       user_id: z.preprocess(

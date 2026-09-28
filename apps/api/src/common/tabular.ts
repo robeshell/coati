@@ -2,7 +2,7 @@
  * Table file read/write (CSV / XLSX)
  *
  * - `.xls` is not supported: uploading .xls returns an explicit 400; export/template with file_type=xls falls back to the default csv
- * - CSV output uses the excel dialect: `\r\n` line endings, minimal quoting, UTF-8 BOM
+ * - CSV output is Excel-style CSV: `\r\n` line endings, minimal quoting, UTF-8 BOM
  * - Formula injection guard: cells starting with = + @ or tab/CR, or - followed by a non-digit, get a `'` prefix
  * - Import file limit is 5MB
  */
@@ -70,7 +70,7 @@ export function formatCellValue(value: unknown): string {
       `${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:${pad(value.getUTCSeconds())}`
     )
   }
-  if (typeof value === 'boolean') return value ? 'True' : 'False'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(value)
   return String(value).trim()
 }
@@ -93,7 +93,7 @@ function readCsv(content: Buffer): TableReadResult {
   }
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
 
-  // csv.DictReader: blank lines are skipped (not counted), rows with mismatched column counts are handled leniently
+  // Blank lines are skipped (not counted); rows with a different column count are read as far as they go
   const records = parseCsv(text, {
     relax_column_count: true,
     relax_quotes: true,
@@ -116,7 +116,7 @@ function readCsv(content: Buffer): TableReadResult {
   return { fieldnames, rows, fileType: 'csv' }
 }
 
-/** exceljs cell value → raw value equivalent to what openpyxl data_only=True reads */
+/** exceljs cell value → its plain value (a formula's cached result, rich text joined, a hyperlink's text) */
 function xlsxCellRaw(value: ExcelJS.CellValue): unknown {
   if (value === null || value === undefined) return null
   if (value instanceof Date) return value
@@ -181,7 +181,7 @@ export async function readTableFile(file: UploadedFile | null | undefined): Prom
 
 // ---------------------------------------------------------------- Write
 
-/** Encode a single CSV field (excel dialect, minimal quoting) */
+/** Encode a single CSV field (Excel-style CSV, minimal quoting) */
 function csvField(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
 }
@@ -211,7 +211,7 @@ export async function buildTable(
   let payload: Buffer
   if (fileType === 'csv') {
     const text = [safeHeaders, ...safeRows].map(csvRow).join('')
-    payload = Buffer.from(`﻿${text}`, 'utf8')
+    payload = Buffer.from(`\uFEFF${text}`, 'utf8')
   } else {
     const { default: ExcelJS } = await import('exceljs')
     const workbook = new ExcelJS.Workbook()

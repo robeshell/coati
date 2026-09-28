@@ -1,4 +1,4 @@
-/** Match the legacy business-day default and invalid-zone fallback. */
+/** Match the alternate business-day default and invalid-zone fallback. */
 export function gatewayTimezone(value = process.env.AGENT_TIMEZONE) {
   const name = value || 'Asia/Shanghai'
   try {

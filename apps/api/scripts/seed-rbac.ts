@@ -4,21 +4,24 @@
  * Usage:
  *   pnpm seed:rbac                    # full rebuild: truncate user_roles / role_menus / admin_users / roles / menus, then rewrite
  *   pnpm seed:rbac -- --incremental   # incremental sync: upsert menus by code + refresh super admin permissions, deletes nothing
+ *   pnpm seed:rbac -- --incremental --reset-admin-password   # also set the admin password to ADMIN_PASSWORD
  *
  * The menu tree (MENUS_DATA) is the single source of truth: add new menu/button permission entries here, then run `--incremental`.
- * IDs are fixed (including the legacy 31/33/34/35/36/37/100002/100003) and must not be changed.
+ * IDs are fixed and must not be changed.
  *
  * Key behaviors:
  * - Menus are matched by code: existing ones only get their 9 fields updated (id unchanged); missing ones are inserted with the fixed id, falling back to the sequence if that id is taken
  * - No UPDATE is issued when field values are unchanged, so updated_at stays as is
  * - After inserting, only the menus sequence is synced: setval(pg_get_serial_sequence('menus','id'), max(id)+1, false)
- * - The super admin role (super_admin) is granted all menus; the admin account is created only if missing (password from ADMIN_PASSWORD, pbkdf2:sha256 format)
+ * - The super admin role (super_admin) is granted all menus; the admin account is created only if missing (password from
+ *   ADMIN_PASSWORD, hashed by common/password.ts); --reset-admin-password also sets an existing admin's password; so does a stored hash in a format
+ *   common/password.ts can't verify (nobody could sign in with it)
  * - Commit boundaries: truncate / menus / roles / account each run in their own transaction
  */
 
 import { parseArgs } from 'node:util'
 import pg from 'pg'
-import { generatePasswordHash } from '../src/common/password'
+import { generatePasswordHash, isPasswordHash } from '../src/common/password'
 import { loadConfig, loadEnvFiles, type AppEnv } from '../src/config'
 
 export interface MenuSeed {
@@ -37,47 +40,153 @@ export interface MenuSeed {
 
 // prettier-ignore
 export const MENUS_DATA: readonly MenuSeed[] = [
-  { id: 2, name: "系统管理", code: "system", icon: "IconSetting", path: null, component: null, parent_id: null, sort_order: 99, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 21, name: "用户管理", code: "system_users", icon: "IconUser", path: "/system/users", component: "admin/users", parent_id: 2, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 22, name: "角色权限", code: "system_roles", icon: "IconIdCard", path: "/system/roles", component: "admin/roles", parent_id: 2, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 23, name: "菜单管理", code: "system_menus", icon: "IconApps", path: "/system/menus", component: "admin/menus", parent_id: 2, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 24, name: "日志管理", code: "system_logs", icon: "IconFile", path: "/system/logs", component: "admin/logs", parent_id: 2, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 25, name: "数据字典", code: "system_dicts", icon: "IconList", path: "/system/dicts", component: "admin/dicts", parent_id: 2, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 32, name: "定时任务", code: "system_scheduled_tasks", icon: "IconSetting", path: "/system/scheduled-tasks", component: "admin/scheduled_tasks", parent_id: 2, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 100002, name: "消息通知", code: "system_notifications", icon: "IconBell", path: "/system/notifications", component: "admin/notifications", parent_id: 2, sort_order: 33, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 100003, name: "公告管理", code: "system_announcements", icon: "IconSend", path: "/system/announcements", component: "admin/announcement_page", parent_id: 2, sort_order: 34, menu_type: "menu", is_visible: true, is_active: true },
-  { id: 211, name: "新增用户", code: "system_users_add", icon: null, path: null, component: null, parent_id: 21, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 1, name: "首页", code: "dashboard", icon: "Home", path: "/framework-dashboard", component: "admin/dashboard", parent_id: null, sort_order: 100, menu_type: "menu", is_visible: false, is_active: false },
+  // Top-level menus
+  { id: 2, name: "系统管理", code: "system", icon: "Settings", path: null, component: null, parent_id: null, sort_order: 99, menu_type: "menu", is_visible: true, is_active: true },
+  // System management groups (second level); pages below hang under these
+  { id: 201, name: "组织权限", code: "system_group_org", icon: "Users", path: null, component: null, parent_id: 2, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 202, name: "安全审计", code: "system_group_security", icon: "ShieldCheck", path: null, component: null, parent_id: 2, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 203, name: "系统配置", code: "system_group_config", icon: "SlidersHorizontal", path: null, component: null, parent_id: 2, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 204, name: "内容消息", code: "system_group_content", icon: "Inbox", path: null, component: null, parent_id: 2, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 3, name: "组件示例中心", code: "component_center", icon: "AppWindow", path: null, component: null, parent_id: null, sort_order: 2, menu_type: "menu", is_visible: true, is_active: false },
+  // System management submenus
+  { id: 21, name: "用户管理", code: "system_users", icon: "User", path: "/system/users", component: "admin/users", parent_id: 201, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 22, name: "角色权限", code: "system_roles", icon: "IdCard", path: "/system/roles", component: "admin/roles", parent_id: 201, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 23, name: "菜单管理", code: "system_menus", icon: "AppWindow", path: "/system/menus", component: "admin/menus", parent_id: 203, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 24, name: "日志管理", code: "system_logs", icon: "FileText", path: "/system/logs", component: "admin/logs", parent_id: 202, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 25, name: "数据字典", code: "system_dicts", icon: "List", path: "/system/dicts", component: "admin/dicts", parent_id: 203, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 26, name: "部门管理", code: "system_departments", icon: "Network", path: "/system/departments", component: "admin/departments", parent_id: 201, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 27, name: "文件管理", code: "system_files", icon: "FolderOpen", path: "/system/files", component: "admin/files", parent_id: 204, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 28, name: "在线用户", code: "system_sessions", icon: "Monitor", path: "/system/sessions", component: "admin/sessions", parent_id: 202, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 29, name: "系统设置", code: "system_settings", icon: "Settings", path: "/system/settings", component: "admin/settings", parent_id: 203, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 100002, name: "消息通知", code: "system_notifications", icon: "Bell", path: "/system/notifications", component: "admin/notifications", parent_id: 204, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 100003, name: "公告管理", code: "system_announcements", icon: "Send", path: "/system/announcements", component: "admin/announcement_page", parent_id: 204, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 32, name: "定时任务", code: "system_scheduled_tasks", icon: "Calendar", path: "/system/scheduled-tasks", component: "admin/scheduled_tasks", parent_id: 203, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 38, name: "API Token", code: "system_api_tokens", icon: "KeyRound", path: "/system/api-tokens", component: "admin/api_tokens", parent_id: 202, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 39, name: "Webhook", code: "system_webhooks", icon: "Webhook", path: "/system/webhooks", component: "admin/webhooks", parent_id: 203, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Component showcase center: category parent nodes ─────────────────
+  { id: 41, name: "数据可视化", code: "cc_dataviz", icon: "PieChart", path: null, component: null, parent_id: 3, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 44, name: "AI 应用", code: "cc_ai", icon: "Send", path: null, component: null, parent_id: 3, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 45, name: "编辑器 / 低代码", code: "cc_editor", icon: "PenLine", path: null, component: null, parent_id: 3, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 46, name: "工程 / 工具类", code: "cc_devtools", icon: "Layers", path: null, component: null, parent_id: 3, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 43, name: "页面模板", code: "cc_patterns", icon: "LayoutGrid", path: null, component: null, parent_id: 3, sort_order: 0, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 47, name: "组件", code: "cc_components", icon: "Blocks", path: null, component: null, parent_id: 3, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Data visualization (parent_id=41) ─────────────────────────────
+  { id: 414, name: "数据大屏", code: "cc_dataviz_dashboard", icon: "BarChart3", path: "/component-center/dashboard-page", component: "component_center/dataviz/dashboard_page", parent_id: 41, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Page patterns (parent_id=43): one page per pattern (IDs 4301+), all on the shared demo API (demo_records) ──
+  { id: 4301, name: "标准列表", code: "cc_patterns_standard_list", icon: "List", path: "/component-center/patterns/standard-list", component: "component_center/patterns/demo_record_page", parent_id: 43, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4302, name: "卡片列表", code: "cc_patterns_card_list", icon: "LayoutGrid", path: "/component-center/patterns/card-list", component: "component_center/patterns/card_list_page", parent_id: 43, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4303, name: "树形列表", code: "cc_patterns_tree_list", icon: "ListTree", path: "/component-center/patterns/tree-list", component: "component_center/patterns/tree_list_page", parent_id: 43, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4304, name: "统计列表", code: "cc_patterns_stats_list", icon: "ChartColumn", path: "/component-center/patterns/stats-list", component: "component_center/patterns/stats_list_page", parent_id: 43, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4305, name: "详情页", code: "cc_patterns_detail", icon: "FileText", path: "/component-center/patterns/detail", component: "component_center/patterns/detail_page", parent_id: 43, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4306, name: "分步表单", code: "cc_patterns_step_form", icon: "ListOrdered", path: "/component-center/patterns/step-form", component: "component_center/patterns/step_form_page", parent_id: 43, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4307, name: "动态表单", code: "cc_patterns_dynamic_form", icon: "FormInput", path: "/component-center/patterns/dynamic-form", component: "component_center/patterns/dynamic_form_page", parent_id: 43, sort_order: 7, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4308, name: "看板", code: "cc_patterns_kanban", icon: "Kanban", path: "/component-center/patterns/kanban", component: "component_center/patterns/kanban_page", parent_id: 43, sort_order: 8, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4309, name: "甘特图", code: "cc_patterns_gantt", icon: "ChartGantt", path: "/component-center/patterns/gantt", component: "component_center/patterns/gantt_page", parent_id: 43, sort_order: 9, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4310, name: "高级表格", code: "cc_patterns_advanced_table", icon: "Table2", path: "/component-center/patterns/advanced-table", component: "component_center/patterns/advanced_table_page", parent_id: 43, sort_order: 10, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Components (parent_id=47): one page per group of shared components, mock data only, no buttons ──
+  { id: 4701, name: "数据表格", code: "cc_components_data_table", icon: "Table2", path: "/component-center/components/data-table", component: "component_center/components/data_table_page", parent_id: 47, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4702, name: "表单", code: "cc_components_forms", icon: "FormInput", path: "/component-center/components/forms", component: "component_center/components/forms_page", parent_id: 47, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4703, name: "筛选", code: "cc_components_filters", icon: "ListFilter", path: "/component-center/components/filters", component: "component_center/components/filters_page", parent_id: 47, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4704, name: "选择器", code: "cc_components_pickers", icon: "ListChecks", path: "/component-center/components/pickers", component: "component_center/components/pickers_page", parent_id: 47, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4705, name: "树", code: "cc_components_trees", icon: "ListTree", path: "/component-center/components/trees", component: "component_center/components/trees_page", parent_id: 47, sort_order: 5, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4706, name: "上传", code: "cc_components_uploads", icon: "Upload", path: "/component-center/components/uploads", component: "component_center/components/uploads_page", parent_id: 47, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4707, name: "导入导出", code: "cc_components_import_export", icon: "FileSpreadsheet", path: "/component-center/components/import-export", component: "component_center/components/import_export_page", parent_id: 47, sort_order: 7, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4708, name: "反馈", code: "cc_components_feedback", icon: "CircleAlert", path: "/component-center/components/feedback", component: "component_center/components/feedback_page", parent_id: 47, sort_order: 8, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4709, name: "数据展示", code: "cc_components_data_display", icon: "LayoutDashboard", path: "/component-center/components/data-display", component: "component_center/components/data_display_page", parent_id: 47, sort_order: 9, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4710, name: "Markdown", code: "cc_components_markdown", icon: "Newspaper", path: "/component-center/components/markdown", component: "component_center/components/markdown_page", parent_id: 47, sort_order: 10, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 4711, name: "条件构建器", code: "cc_components_condition_builder", icon: "GitBranch", path: "/component-center/components/condition-builder", component: "component_center/components/condition_builder_page", parent_id: 47, sort_order: 11, menu_type: "menu", is_visible: true, is_active: true },
+  // The shared demo API's buttons hang under the directory, not a page (IDs 431–435; after the pages in the role editor)
+  { id: 431, name: "新建记录", code: "cc_patterns_add", icon: null, path: null, component: null, parent_id: 43, sort_order: 101, menu_type: "button", is_visible: false, is_active: true },
+  { id: 432, name: "编辑记录", code: "cc_patterns_edit", icon: null, path: null, component: null, parent_id: 43, sort_order: 102, menu_type: "button", is_visible: false, is_active: true },
+  { id: 433, name: "删除记录", code: "cc_patterns_delete", icon: null, path: null, component: null, parent_id: 43, sort_order: 103, menu_type: "button", is_visible: false, is_active: true },
+  { id: 434, name: "导出记录", code: "cc_patterns_export", icon: null, path: null, component: null, parent_id: 43, sort_order: 104, menu_type: "button", is_visible: false, is_active: true },
+  { id: 435, name: "导入记录", code: "cc_patterns_import", icon: null, path: null, component: null, parent_id: 43, sort_order: 105, menu_type: "button", is_visible: false, is_active: true },
+  // User management button permissions
+  { id: 211, name: "新建用户", code: "system_users_add", icon: null, path: null, component: null, parent_id: 21, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
   { id: 212, name: "编辑用户", code: "system_users_edit", icon: null, path: null, component: null, parent_id: 21, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
   { id: 213, name: "删除用户", code: "system_users_delete", icon: null, path: null, component: null, parent_id: 21, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
   { id: 214, name: "导出用户", code: "system_users_export", icon: null, path: null, component: null, parent_id: 21, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
   { id: 215, name: "导入用户", code: "system_users_import", icon: null, path: null, component: null, parent_id: 21, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
-  { id: 221, name: "新增角色", code: "system_roles_add", icon: null, path: null, component: null, parent_id: 22, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 216, name: "启用/停用用户", code: "system_users_status", icon: null, path: null, component: null, parent_id: 21, sort_order: 6, menu_type: "button", is_visible: false, is_active: true },
+  { id: 261, name: "新建部门", code: "system_departments_add", icon: null, path: null, component: null, parent_id: 26, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 262, name: "编辑部门", code: "system_departments_edit", icon: null, path: null, component: null, parent_id: 26, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  { id: 263, name: "删除部门", code: "system_departments_delete", icon: null, path: null, component: null, parent_id: 26, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
+  { id: 271, name: "删除文件", code: "system_files_delete", icon: null, path: null, component: null, parent_id: 27, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 281, name: "强制下线", code: "system_sessions_revoke", icon: null, path: null, component: null, parent_id: 28, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 291, name: "修改系统设置", code: "system_settings_edit", icon: null, path: null, component: null, parent_id: 29, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 381, name: "吊销 API Token", code: "system_api_tokens_revoke", icon: null, path: null, component: null, parent_id: 38, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 391, name: "新建 Webhook", code: "system_webhooks_add", icon: null, path: null, component: null, parent_id: 39, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 392, name: "编辑 Webhook", code: "system_webhooks_edit", icon: null, path: null, component: null, parent_id: 39, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  { id: 393, name: "删除 Webhook", code: "system_webhooks_delete", icon: null, path: null, component: null, parent_id: 39, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
+  // Role management button permissions
+  { id: 221, name: "新建角色", code: "system_roles_add", icon: null, path: null, component: null, parent_id: 22, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
   { id: 222, name: "编辑角色", code: "system_roles_edit", icon: null, path: null, component: null, parent_id: 22, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
   { id: 223, name: "删除角色", code: "system_roles_delete", icon: null, path: null, component: null, parent_id: 22, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
   { id: 224, name: "导出角色", code: "system_roles_export", icon: null, path: null, component: null, parent_id: 22, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
   { id: 225, name: "导入角色", code: "system_roles_import", icon: null, path: null, component: null, parent_id: 22, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
-  { id: 231, name: "新增菜单", code: "system_menus_add", icon: null, path: null, component: null, parent_id: 23, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  // Menu management button permissions
+  { id: 231, name: "新建菜单", code: "system_menus_add", icon: null, path: null, component: null, parent_id: 23, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
   { id: 232, name: "编辑菜单", code: "system_menus_edit", icon: null, path: null, component: null, parent_id: 23, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
   { id: 233, name: "删除菜单", code: "system_menus_delete", icon: null, path: null, component: null, parent_id: 23, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
   { id: 234, name: "导出菜单", code: "system_menus_export", icon: null, path: null, component: null, parent_id: 23, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
   { id: 235, name: "导入菜单", code: "system_menus_import", icon: null, path: null, component: null, parent_id: 23, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
+  // Log management button permissions
   { id: 241, name: "查看日志", code: "system_logs_view", icon: null, path: null, component: null, parent_id: 24, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
   { id: 242, name: "导出日志", code: "system_logs_export", icon: null, path: null, component: null, parent_id: 24, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
-  { id: 243, name: "导入日志", code: "system_logs_import", icon: null, path: null, component: null, parent_id: 24, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
-  { id: 251, name: "新增字典", code: "system_dicts_add", icon: null, path: null, component: null, parent_id: 25, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  // Data dictionary button permissions
+  { id: 251, name: "新建字典", code: "system_dicts_add", icon: null, path: null, component: null, parent_id: 25, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
   { id: 252, name: "编辑字典", code: "system_dicts_edit", icon: null, path: null, component: null, parent_id: 25, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
   { id: 253, name: "删除字典", code: "system_dicts_delete", icon: null, path: null, component: null, parent_id: 25, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
   { id: 254, name: "导出字典", code: "system_dicts_export", icon: null, path: null, component: null, parent_id: 25, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
   { id: 255, name: "导入字典", code: "system_dicts_import", icon: null, path: null, component: null, parent_id: 25, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
+  // Scheduled task button permissions
+  { id: 321, name: "新建任务", code: "system_scheduled_tasks_add", icon: null, path: null, component: null, parent_id: 32, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 322, name: "编辑任务", code: "system_scheduled_tasks_edit", icon: null, path: null, component: null, parent_id: 32, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  { id: 323, name: "删除任务", code: "system_scheduled_tasks_delete", icon: null, path: null, component: null, parent_id: 32, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
+  { id: 324, name: "执行任务", code: "system_scheduled_tasks_run", icon: null, path: null, component: null, parent_id: 32, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
+  // Notification button permissions
+  { id: 301, name: "新建通知", code: "system_notifications_add", icon: null, path: null, component: null, parent_id: 100002, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 302, name: "删除通知", code: "system_notifications_delete", icon: null, path: null, component: null, parent_id: 100002, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  // Announcement management button permissions
+  { id: 311, name: "新建公告", code: "system_announcements_add", icon: null, path: null, component: null, parent_id: 100003, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 312, name: "编辑公告", code: "system_announcements_edit", icon: null, path: null, component: null, parent_id: 100003, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  { id: 313, name: "删除公告", code: "system_announcements_delete", icon: null, path: null, component: null, parent_id: 100003, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
+  { id: 314, name: "导出公告", code: "system_announcements_export", icon: null, path: null, component: null, parent_id: 100003, sort_order: 4, menu_type: "button", is_visible: false, is_active: true },
+  { id: 315, name: "导入公告", code: "system_announcements_import", icon: null, path: null, component: null, parent_id: 100003, sort_order: 5, menu_type: "button", is_visible: false, is_active: true },
+  // ── Data visualization (parent_id=41) ────────────────────────────────
+  { id: 411, name: "实时折线图", code: "cc_dataviz_realtime_chart", icon: "Activity", path: "/component-center/dataviz/realtime-chart", component: "component_center/dataviz/realtime_chart_page", parent_id: 41, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 412, name: "热力日历图", code: "cc_dataviz_heatmap", icon: "Calendar", path: "/component-center/dataviz/heatmap", component: "component_center/dataviz/heatmap_page", parent_id: 41, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 413, name: "流量转化分析", code: "cc_dataviz_traffic_flow", icon: "Workflow", path: "/component-center/dataviz/traffic-flow", component: "component_center/dataviz/traffic_flow_page", parent_id: 41, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  // ── AI apps (parent_id=44) ────────────────────────────────────────
+  { id: 441, name: "AI 对话", code: "cc_ai_chat", icon: "MessageSquare", path: "/component-center/ai/chat", component: "component_center/ai/ai_chat_page", parent_id: 44, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 442, name: "AI 提示词工坊", code: "cc_ai_prompt", icon: "PenLine", path: "/component-center/ai/prompt", component: "component_center/ai/ai_prompt_page", parent_id: 44, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 443, name: "AI 数据查询", code: "cc_ai_sql", icon: "Terminal", path: "/component-center/ai/sql", component: "component_center/ai/ai_sql_page", parent_id: 44, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Editors / low-code (parent_id=45) ────────────────────────────
+  { id: 451, name: "富文本编辑器", code: "cc_editor_rich_text", icon: "Type", path: "/component-center/editor/rich-text", component: "component_center/editor/rich_text_page", parent_id: 45, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 452, name: "代码编辑器", code: "cc_editor_code", icon: "Code2", path: "/component-center/editor/code", component: "component_center/editor/code_editor_page", parent_id: 45, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 453, name: "JSON 编辑器", code: "cc_editor_json", icon: "Braces", path: "/component-center/editor/json", component: "component_center/editor/json_editor_page", parent_id: 45, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 454, name: "Markdown 预览", code: "cc_editor_markdown", icon: "Newspaper", path: "/component-center/editor/markdown", component: "component_center/editor/markdown_page", parent_id: 45, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  // ── Engineering / tools (parent_id=46) ───────────────────────────
+  { id: 461, name: "拖拽布局", code: "cc_devtools_drag_layout", icon: "LayoutGrid", path: "/component-center/devtools/drag-layout", component: "component_center/devtools/drag_layout_page", parent_id: 46, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 462, name: "虚拟滚动列表", code: "cc_devtools_virtual_scroll", icon: "List", path: "/component-center/devtools/virtual-scroll", component: "component_center/devtools/virtual_scroll_page", parent_id: 46, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 463, name: "WebSocket 通信", code: "cc_devtools_websocket", icon: "Send", path: "/component-center/devtools/websocket", component: "component_center/devtools/websocket_page", parent_id: 46, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true },
+  { id: 464, name: "性能监控面板", code: "cc_devtools_perf_monitor", icon: "Activity", path: "/component-center/devtools/perf-monitor", component: "component_center/devtools/perf_monitor_page", parent_id: 46, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true },
+  // AI app button permissions
+  { id: 4411, name: "新建对话", code: "cc_ai_chat_new", icon: null, path: null, component: null, parent_id: 441, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 4421, name: "新建模板", code: "cc_ai_prompt_add", icon: null, path: null, component: null, parent_id: 442, sort_order: 1, menu_type: "button", is_visible: false, is_active: true },
+  { id: 4422, name: "编辑模板", code: "cc_ai_prompt_edit", icon: null, path: null, component: null, parent_id: 442, sort_order: 2, menu_type: "button", is_visible: false, is_active: true },
+  { id: 4423, name: "删除模板", code: "cc_ai_prompt_delete", icon: null, path: null, component: null, parent_id: 442, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
+  { id: 243, name: "导入日志", code: "system_logs_import", icon: null, path: null, component: null, parent_id: 24, sort_order: 3, menu_type: "button", is_visible: false, is_active: true },
   {id: 1000, name: "网关总览", code: "gateway_overview", icon: "IconHome", path: "/dashboard", component: "gateway/overview", parent_id: null, sort_order: 1, menu_type: "menu", is_visible: true, is_active: true},
   {id: 1001, name: "模型服务", code: "gateway_upstreams", icon: "IconServer", path: "/gateway/upstreams", component: "gateway/upstreams", parent_id: null, sort_order: 2, menu_type: "menu", is_visible: true, is_active: true},
   {id: 1010, name: "我的用量", code: "gateway_my_usage", icon: "IconFile", path: null, component: null, parent_id: null, sort_order: 11, menu_type: "menu", is_visible: false, is_active: true},
   {id: 10014, name: "测试模型服务", code: "gateway_upstreams_test", icon: null, path: null, component: null, parent_id: 1001, sort_order: 4, menu_type: "button", is_visible: false, is_active: true},
-  {id: 10011, name: "新增模型服务", code: "gateway_upstreams_add", icon: null, path: null, component: null, parent_id: 1001, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10011, name: "新建模型服务", code: "gateway_upstreams_add", icon: null, path: null, component: null, parent_id: 1001, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10012, name: "编辑模型服务", code: "gateway_upstreams_edit", icon: null, path: null, component: null, parent_id: 1001, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 10013, name: "停用模型服务", code: "gateway_upstreams_delete", icon: null, path: null, component: null, parent_id: 1001, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
   {id: 1002, name: "模型与路由", code: "gateway_routes", icon: "IconBranch", path: "/gateway/routes", component: "gateway/routes", parent_id: null, sort_order: 3, menu_type: "menu", is_visible: true, is_active: true},
-  {id: 10021, name: "新增模型路由", code: "gateway_routes_add", icon: null, path: null, component: null, parent_id: 1002, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10021, name: "新建模型路由", code: "gateway_routes_add", icon: null, path: null, component: null, parent_id: 1002, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10022, name: "编辑模型路由", code: "gateway_routes_edit", icon: null, path: null, component: null, parent_id: 1002, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 10023, name: "停用模型路由", code: "gateway_routes_delete", icon: null, path: null, component: null, parent_id: 1002, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
   {id: 1003, name: "访问与授权", code: "gateway_keys", icon: "IconKey", path: "/gateway/keys", component: "gateway/keys", parent_id: null, sort_order: 4, menu_type: "menu", is_visible: true, is_active: true},
@@ -96,22 +205,15 @@ export const MENUS_DATA: readonly MenuSeed[] = [
   {id: 10071, name: "运行缓存验证", code: "gateway_cache_tests_run", icon: null, path: null, component: null, parent_id: 1007, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10072, name: "删除缓存验证", code: "gateway_cache_tests_delete", icon: null, path: null, component: null, parent_id: 1007, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 1006, name: "模型能力", code: "gateway_model_profiles", icon: "IconServer", path: "/gateway/model-profiles", component: "gateway/model-profiles", parent_id: null, sort_order: 7, menu_type: "menu", is_visible: true, is_active: true},
-  ...['add','edit','delete'].map((action,index)=>({id:10061+index,name:['新增模型能力','编辑模型能力','删除模型能力'][index]!,code:`gateway_model_profiles_${action}`,icon:null,path:null,component:null,parent_id:1006,sort_order:index+1,menu_type:'button' as const,is_visible:false,is_active:true})),
+  ...['add','edit','delete'].map((action,index)=>({id:10061+index,name:['新建模型能力','编辑模型能力','删除模型能力'][index]!,code:`gateway_model_profiles_${action}`,icon:null,path:null,component:null,parent_id:1006,sort_order:index+1,menu_type:'button' as const,is_visible:false,is_active:true})),
   {id: 1005, name: "模型渠道", code: "gateway_my_channels", icon: "IconServer", path: "/gateway/my-channels", component: "gateway/my-channels", parent_id: null, sort_order: 6, menu_type: "menu", is_visible: true, is_active: true},
-  {id: 10051, name: "新增个人渠道", code: "gateway_my_channels_add", icon: null, path: null, component: null, parent_id: 1005, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
+  {id: 10051, name: "新建个人渠道", code: "gateway_my_channels_add", icon: null, path: null, component: null, parent_id: 1005, sort_order: 1, menu_type: "button", is_visible: false, is_active: true},
   {id: 10052, name: "编辑个人渠道", code: "gateway_my_channels_edit", icon: null, path: null, component: null, parent_id: 1005, sort_order: 2, menu_type: "button", is_visible: false, is_active: true},
   {id: 10053, name: "删除个人渠道", code: "gateway_my_channels_delete", icon: null, path: null, component: null, parent_id: 1005, sort_order: 3, menu_type: "button", is_visible: false, is_active: true},
-
   {id: 10054, name: "测试个人渠道", code: "gateway_my_channels_test", icon: null, path: null, component: null, parent_id: 1005, sort_order: 4, menu_type: "button", is_visible: false, is_active: true},
-
 ]
 
-/** Retired experimental page menus: data is kept but they are hidden from navigation */
-export const RETIRED_MENU_CODES = [
-  'component_center_templates',
-  'component_center_scenarios',
-] as const
-
+/** Fields an incremental sync compares and updates on an existing menu (matched by code) */
 const MENU_UPDATE_FIELDS = [
   'name',
   'icon',
@@ -148,6 +250,8 @@ export interface SeedRbacOptions {
   adminPassword: string
   /** true: upsert only, never delete (--incremental) */
   incremental?: boolean
+  /** true: an existing admin account also gets adminPassword (--reset-admin-password) */
+  resetAdminPassword?: boolean
   log?: (msg: string) => void
 }
 
@@ -158,10 +262,7 @@ export interface SeedRbacResult {
   adminCreated: boolean
 }
 
-async function inTransaction<T>(
-  client: Queryable,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function inTransaction<T>(client: Queryable, fn: () => Promise<T>): Promise<T> {
   await client.query('BEGIN')
   try {
     const result = await fn()
@@ -173,145 +274,35 @@ async function inTransaction<T>(
   }
 }
 
-async function findMenuByCode(
-  client: Queryable,
-  code: string,
-): Promise<MenuRow | undefined> {
-  const { rows } = await client.query<MenuRow>(
-    'SELECT * FROM menus WHERE code = $1 LIMIT 1',
-    [code],
-  )
+async function findMenuByCode(client: Queryable, code: string): Promise<MenuRow | undefined> {
+  const { rows } = await client.query<MenuRow>('SELECT * FROM menus WHERE code = $1 LIMIT 1', [code])
   return rows[0]
 }
 
-async function clearRbacData(
-  client: Queryable,
-  log: (msg: string) => void,
-): Promise<void> {
-  log('清空现有RBAC数据...')
+async function clearRbacData(client: Queryable, log: (msg: string) => void): Promise<void> {
+  log('Clearing existing RBAC data...')
   try {
     await inTransaction(client, async () => {
       await client.query('DELETE FROM user_roles')
-      log('  清空用户-角色关联')
+      log('  Cleared user-role links')
       await client.query('DELETE FROM role_menus')
-      log('  清空角色-菜单关联')
+      log('  Cleared role-menu links')
       await client.query('DELETE FROM admin_users')
-      log('  清空管理员账号')
+      log('  Cleared admin users')
       await client.query('DELETE FROM roles')
-      log('  清空角色')
+      log('  Cleared roles')
       await client.query('DELETE FROM menus')
-      log('  清空菜单')
+      log('  Cleared menus')
     })
-    log('数据清空完成\n')
+    log('Data cleared\n')
   } catch (err) {
-    log(`  清空失败: ${err instanceof Error ? err.message : String(err)}`)
+    log(`  Clearing failed: ${err instanceof Error ? err.message : String(err)}`)
     throw err
   }
 }
 
-/** Migrate the old menu code data_management to component_center, avoiding duplicate menus after the rename */
-async function migrateComponentCenterMenuCode(
-  client: Queryable,
-  log: (msg: string) => void,
-): Promise<void> {
-  const legacy = await findMenuByCode(client, 'data_management')
-  const current = await findMenuByCode(client, 'component_center')
-  if (!legacy) return
-
-  if (current && current.id !== legacy.id) {
-    // Move any submenus attached under the new-code menu back to the old menu to keep the hierarchy stable
-    await client.query(
-      `UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`,
-      [legacy.id, current.id],
-    )
-    // Migrate role-menu links so permissions are not lost when the duplicate menu is deleted
-    await client.query(
-      `INSERT INTO role_menus (role_id, menu_id)
-       SELECT DISTINCT rm.role_id, $1::int
-       FROM role_menus rm
-       WHERE rm.menu_id = $2
-       AND NOT EXISTS (
-         SELECT 1 FROM role_menus x WHERE x.role_id = rm.role_id AND x.menu_id = $1::int
-       )`,
-      [legacy.id, current.id],
-    )
-    await client.query('DELETE FROM role_menus WHERE menu_id = $1', [
-      current.id,
-    ])
-    // First rename the duplicate record to a temporary code to avoid a unique-key conflict, then delete it
-    await client.query(
-      `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
-      [`component_center_legacy_${current.id}`, current.id],
-    )
-    await client.query('DELETE FROM menus WHERE id = $1', [current.id])
-    log('  已合并重复菜单: [data_management] + [component_center]')
-  }
-
-  await client.query(
-    `UPDATE menus SET code = $1, name = $2, updated_at = ${UTC_NOW} WHERE id = $3`,
-    ['component_center', '组件示例中心', legacy.id],
-  )
-  log('  菜单编码迁移: [data_management] -> [component_center]')
-}
-
-/** Migrate the old query_management menu/button codes to list_page, avoiding duplicate menus */
-async function migrateListPageMenuCodes(
-  client: Queryable,
-  log: (msg: string) => void,
-): Promise<void> {
-  const codeMappings: Array<[string, string]> = [
-    ['system_query_management', 'system_list_page'],
-    ['system_query_management_add', 'system_list_page_add'],
-    ['system_query_management_edit', 'system_list_page_edit'],
-    ['system_query_management_delete', 'system_list_page_delete'],
-  ]
-
-  for (const [oldCode, newCode] of codeMappings) {
-    const legacy = await findMenuByCode(client, oldCode)
-    const current = await findMenuByCode(client, newCode)
-    if (!legacy) continue
-
-    if (current && current.id !== legacy.id) {
-      await client.query(
-        `UPDATE menus SET parent_id = $1, updated_at = ${UTC_NOW} WHERE parent_id = $2`,
-        [current.id, legacy.id],
-      )
-      await client.query(
-        `INSERT INTO role_menus (role_id, menu_id)
-         SELECT DISTINCT rm.role_id, $1::int
-         FROM role_menus rm
-         WHERE rm.menu_id = $2
-         AND NOT EXISTS (
-           SELECT 1 FROM role_menus x WHERE x.role_id = rm.role_id AND x.menu_id = $1::int
-         )`,
-        [current.id, legacy.id],
-      )
-      await client.query('DELETE FROM role_menus WHERE menu_id = $1', [
-        legacy.id,
-      ])
-      await client.query(
-        `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
-        [`legacy_${oldCode}_${legacy.id}`, legacy.id],
-      )
-      await client.query('DELETE FROM menus WHERE id = $1', [legacy.id])
-      log(`  已合并重复菜单编码: [${oldCode}] + [${newCode}]`)
-      continue
-    }
-
-    await client.query(
-      `UPDATE menus SET code = $1, updated_at = ${UTC_NOW} WHERE id = $2`,
-      [newCode, legacy.id],
-    )
-    log(`  菜单编码迁移: [${oldCode}] -> [${newCode}]`)
-  }
-}
-
 /** Sync a PostgreSQL table's primary-key sequence to the current max id (table name is an internal constant, not user input) */
-async function syncIdSequence(
-  client: Queryable,
-  tableName: 'menus',
-  log: (msg: string) => void,
-): Promise<void> {
+async function syncIdSequence(client: Queryable, tableName: 'menus', log: (msg: string) => void): Promise<void> {
   await client.query(
     `SELECT setval(
        pg_get_serial_sequence('${tableName}', 'id'),
@@ -319,39 +310,27 @@ async function syncIdSequence(
        false
      )`,
   )
-  log(`  已同步序列: ${tableName}.id`)
+  log(`  Synced sequence: ${tableName}.id`)
 }
 
-async function initMenus(
-  client: Queryable,
-  log: (msg: string) => void,
-): Promise<{ added: number; updated: number }> {
+async function initMenus(client: Queryable, log: (msg: string) => void): Promise<{ added: number; updated: number }> {
   let added = 0
   let updated = 0
 
   await inTransaction(client, async () => {
-    await migrateComponentCenterMenuCode(client, log)
-    await migrateListPageMenuCodes(client, log)
-
-    log('初始化菜单数据...')
-    const { rows: idRows } = await client.query<{ id: number }>(
-      'SELECT id FROM menus',
-    )
+    log('Seeding menus...')
+    const { rows: idRows } = await client.query<{ id: number }>('SELECT id FROM menus')
     const existingIds = new Set(idRows.map((r) => r.id))
+    // Fixed id in MENUS_DATA → the id the row really has. A menu whose fixed id was taken (e.g. by a menu added by hand) gets another
+    // one, and its children must point there, not at whatever holds the fixed id
+    const actualId = new Map<number, number>()
 
-    const resolvedIds = new Map<number, number>()
-    for (const definition of MENUS_DATA) {
-      // Existing installations may retain a different ID for a canonical code.
-      // Resolve children against the actual parent, not the seed's preferred ID.
-      const parentId = definition.parent_id === null ? null : resolvedIds.get(definition.parent_id)
-      if (parentId === undefined) throw new Error(`Missing seeded parent for ${definition.code}`)
-      const menu = { ...definition, parent_id: parentId }
+    for (const entry of MENUS_DATA) {
+      const menu = { ...entry, parent_id: entry.parent_id === null ? null : (actualId.get(entry.parent_id) ?? entry.parent_id) }
       const existing = await findMenuByCode(client, menu.code)
       if (existing) {
-        resolvedIds.set(definition.id, existing.id)
-        const changed = MENU_UPDATE_FIELDS.some(
-          (field) => existing[field] !== menu[field],
-        )
+        actualId.set(entry.id, existing.id)
+        const changed = MENU_UPDATE_FIELDS.some((field) => existing[field] !== menu[field])
         if (changed) {
           await client.query(
             `UPDATE menus SET name = $1, icon = $2, path = $3, component = $4, parent_id = $5,
@@ -370,13 +349,13 @@ async function initMenus(
               existing.id,
             ],
           )
+          updated += 1
+          log(`  Updated menu: [${menu.code}] ${menu.name}`)
         }
-        updated += 1
-        log(`  更新菜单: [${menu.code}] ${menu.name}`)
         continue
       }
 
-      // If the fixed id is already taken by another menu (legacy data), don't force it; use the sequence instead
+      // If the fixed id is already taken by another menu (e.g. one added by hand), don't force it; use the sequence instead
       const useFixedId = !existingIds.has(menu.id)
       const values = [
         menu.name,
@@ -398,29 +377,18 @@ async function initMenus(
         useFixedId ? [...values, menu.id] : values,
       )
       const newId = rows[0]!.id
-      resolvedIds.set(definition.id, newId)
+      actualId.set(entry.id, newId)
       added += 1
       existingIds.add(newId)
-      log(`  创建菜单: [${menu.code}] ${menu.name} (ID: ${newId})`)
-    }
-
-    for (const code of RETIRED_MENU_CODES) {
-      const retired = await findMenuByCode(client, code)
-      if (retired && (retired.is_active || retired.is_visible)) {
-        await client.query(
-          `UPDATE menus SET is_active = false, is_visible = false, updated_at = ${UTC_NOW} WHERE id = $1`,
-          [retired.id],
-        )
-        updated += 1
-        log(`  下线菜单: [${code}]`)
-      }
+      log(`  Created menu: [${menu.code}] ${menu.name} (ID: ${newId})`)
     }
   })
 
   if (added > 0 || updated > 0) {
-    log(`菜单同步完成，新增 ${added} 项，更新 ${updated} 项\n`)
+    const unchanged = MENUS_DATA.length - added - updated
+    log(`Menus synced: ${added} added, ${updated} updated, ${unchanged} unchanged\n`)
   } else {
-    log('菜单无变更\n')
+    log('Menus unchanged\n')
   }
 
   // Works around the sequence not advancing after explicitly inserting fixed ids
@@ -433,11 +401,9 @@ async function refreshSuperAdminPermissions(
   client: Queryable,
   log: (msg: string) => void,
 ): Promise<{ roleId: number; menuCount: number }> {
-  log('刷新超级管理员权限...')
+  log('Refreshing super admin permissions...')
   return inTransaction(client, async () => {
-    const { rows } = await client.query<{ id: number }>(
-      "SELECT id FROM roles WHERE code = 'super_admin' LIMIT 1",
-    )
+    const { rows } = await client.query<{ id: number }>("SELECT id FROM roles WHERE code = 'super_admin' LIMIT 1")
     let roleId = rows[0]?.id
     if (roleId === undefined) {
       const inserted = await client.query<{ id: number }>(
@@ -445,7 +411,7 @@ async function refreshSuperAdminPermissions(
         ['超级管理员', 'super_admin', '拥有所有权限的超级管理员'],
       )
       roleId = inserted.rows[0]!.id
-      log('  创建角色: 超级管理员')
+      log('  Created role: super_admin')
     }
 
     // admin_role.menus = all_menus: set the linked set to all menus (FKs guarantee no links point to deleted menus, so only missing ones need adding)
@@ -453,11 +419,9 @@ async function refreshSuperAdminPermissions(
       `INSERT INTO role_menus (role_id, menu_id) SELECT $1::int, id FROM menus ON CONFLICT DO NOTHING`,
       [roleId],
     )
-    const { rows: countRows } = await client.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM menus',
-    )
+    const { rows: countRows } = await client.query<{ n: number }>('SELECT count(*)::int AS n FROM menus')
     const menuCount = countRows[0]?.n ?? 0
-    log(`  超级管理员刷新为 ${menuCount} 个菜单权限`)
+    log(`  super_admin now has ${menuCount} menu permissions`)
     return { roleId, menuCount }
   })
 }
@@ -466,13 +430,14 @@ async function initAdminUser(
   client: Queryable,
   roleId: number,
   adminPassword: string,
+  resetPassword: boolean,
   log: (msg: string) => void,
 ): Promise<boolean> {
-  log('初始化管理员账号...')
+  log('Seeding the admin user...')
   let created = false
   await inTransaction(client, async () => {
-    const { rows } = await client.query<{ id: number }>(
-      "SELECT id FROM admin_users WHERE username = 'admin' LIMIT 1",
+    const { rows } = await client.query<{ id: number; password_hash: string }>(
+      "SELECT id, password_hash FROM admin_users WHERE username = 'admin' LIMIT 1",
     )
     let userId = rows[0]?.id
     if (userId === undefined) {
@@ -483,61 +448,66 @@ async function initAdminUser(
       )
       userId = inserted.rows[0]!.id
       created = true
-      log('  创建用户: admin')
+      log('  Created user: admin')
+      log(`  Initial password: ${adminPassword}`)
+    } else if (resetPassword || !isPasswordHash(rows[0]!.password_hash)) {
+      // A hash in another format can never verify, so nobody could sign in as admin: restore ADMIN_PASSWORD
+      await client.query(`UPDATE admin_users SET password_hash = $2, updated_at = ${UTC_NOW} WHERE id = $1`, [
+        userId,
+        await generatePasswordHash(adminPassword),
+      ])
+      log(
+        resetPassword
+          ? '  User exists: admin; password reset'
+          : '  User exists: admin; its password hash was unrecognized, so the password was reset to ADMIN_PASSWORD',
+      )
     } else {
-      log('  用户已存在: admin')
+      log('  User exists: admin')
     }
 
-    const assigned = await client.query(
-      'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [userId, roleId],
-    )
-    if (assigned.rowCount) log('  分配角色: 超级管理员')
+    const assigned = await client.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      userId,
+      roleId,
+    ])
+    if (assigned.rowCount) log('  Assigned role: super_admin')
   })
-  log('管理员账号初始化完成\n')
+  log('Admin user ready\n')
   return created
 }
 
 /** Reusable entry point (called by setup-once); throws on failure and lets the caller choose the exit code */
-export async function seedRbac(
-  options: SeedRbacOptions,
-): Promise<SeedRbacResult> {
+export async function seedRbac(options: SeedRbacOptions): Promise<SeedRbacResult> {
   const log = options.log ?? console.log
   const incremental = options.incremental ?? false
   const client = new pg.Client({ connectionString: options.databaseUrl })
   await client.connect()
   try {
     log('='.repeat(60))
-    log('RBAC系统同步')
+    log('RBAC sync')
     log(`${'='.repeat(60)}\n`)
 
     let menus: { added: number; updated: number }
     let role: { roleId: number; menuCount: number }
     if (incremental) {
-      log('模式: 增量同步\n')
+      log('Mode: incremental\n')
       menus = await initMenus(client, log)
       role = await refreshSuperAdminPermissions(client, log)
     } else {
-      log('模式: 全量重建\n')
+      log('Mode: full rebuild\n')
       await clearRbacData(client, log)
       menus = await initMenus(client, log)
-      log('初始化角色...')
+      log('Seeding roles...')
       role = await refreshSuperAdminPermissions(client, log)
-      log('角色初始化完成\n')
+      log('Roles ready\n')
     }
-    const adminCreated = await initAdminUser(
-      client,
-      role.roleId,
-      options.adminPassword,
-      log,
-    )
+    const adminCreated = await initAdminUser(client, role.roleId, options.adminPassword, options.resetAdminPassword ?? false, log)
 
     log('='.repeat(60))
-    log('同步完成！')
+    log('Sync complete')
     log('='.repeat(60))
-    log('\n登录信息：')
-    log('  用户名: admin')
-    log('  密码: 使用部署时设置的 ADMIN_PASSWORD（不会写入日志）')
+    log('\nSign-in details:')
+    log('  Username: admin')
+    log(`  Password: ${options.adminPassword}`)
 
     return {
       menusAdded: menus.added,
@@ -554,32 +524,28 @@ export async function seedRbac(
 const isMain = /[\\/]seed-rbac\.(?:ts|js|mjs)$/.test(process.argv[1] ?? '')
 if (isMain) {
   let incremental = false
+  let resetAdminPassword = false
   try {
     const { values } = parseArgs({
       args: process.argv.slice(2).filter((arg) => arg !== '--'),
-      options: { incremental: { type: 'boolean', default: false } },
+      options: { incremental: { type: 'boolean', default: false }, 'reset-admin-password': { type: 'boolean', default: false } },
     })
     incremental = values.incremental
+    resetAdminPassword = values['reset-admin-password']
   } catch (err) {
     // Exit code 2 for argument errors
-    console.error('usage: seed-rbac [--incremental]')
-    console.error(
-      `seed-rbac: error: ${err instanceof Error ? err.message : String(err)}`,
-    )
+    console.error('usage: seed-rbac [--incremental] [--reset-admin-password]')
+    console.error(`seed-rbac: error: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(2)
   }
   const env = (process.env.NODE_ENV ?? 'development') as AppEnv
   loadEnvFiles(env)
   const config = loadConfig()
-  seedRbac({
-    databaseUrl: config.databaseUrl,
-    adminPassword: config.adminPassword,
-    incremental,
-  }).catch((err: unknown) => {
-    console.error(
-      `\n初始化失败: ${err instanceof Error ? err.message : String(err)}`,
-    )
-    if (err instanceof Error && err.stack) console.error(err.stack)
-    process.exit(1)
-  })
+  seedRbac({ databaseUrl: config.databaseUrl, adminPassword: config.adminPassword, incremental, resetAdminPassword }).catch(
+    (err: unknown) => {
+      console.error(`\nSeeding failed: ${err instanceof Error ? err.message : String(err)}`)
+      if (err instanceof Error && err.stack) console.error(err.stack)
+      process.exit(1)
+    },
+  )
 }

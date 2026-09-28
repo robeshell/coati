@@ -34,7 +34,7 @@ process.on('SIGINT', () => void shutdown('SIGINT'))
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 
 await app.listen({ host: '0.0.0.0', port })
-app.log.info(`Coati 启动｜环境 ${config.env}｜端口 ${port}`)
+app.log.info(`${config.appName} 启动｜环境 ${config.env}｜端口 ${port}`)
 if (config.runSchedulerInWeb) {
   schedulerRunner = startScheduledTaskRunner(app.db, config, app.log)
   if (schedulerRunner) {

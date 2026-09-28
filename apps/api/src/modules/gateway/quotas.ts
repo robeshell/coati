@@ -26,7 +26,7 @@ export async function listQuotas(repo: GatewayRepository, query: unknown) {
         updated_at:
           row.daily_token_quota === null || !row.updated_at
             ? null
-            : utcNowIso(new Date(row.updated_at)) + 'Z',
+            : utcNowIso(new Date(row.updated_at)),
         effective_quota: effective || null,
         quota_source: row.daily_token_quota === null ? 'default' : 'user',
         remaining:

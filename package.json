@@ -20,9 +20,10 @@
     "openapi:generate": "pnpm --filter @coati/api openapi:generate",
     "openapi:apifox": "pnpm --filter @coati/api openapi:apifox",
     "scaffold": "pnpm --filter @coati/api scaffold",
-    "verify": "pnpm verify:gateway",
-    "lint": "pnpm --filter @coati/api lint",
+    "verify": "pnpm verify:framework && pnpm verify:gateway --static",
+    "lint": "pnpm -r --if-present lint",
     "verify:gateway": "node scripts/verify-gateway.mjs",
-    "bench:gateway": "pnpm --filter @coati/api exec tsx scripts/benchmark-gateway.ts"
+    "bench:gateway": "pnpm --filter @coati/api exec tsx scripts/benchmark-gateway.ts",
+    "verify:framework": "pnpm --filter @coati/api verify"
   }
 }

@@ -7,8 +7,10 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { getCurrentAdminUser, hasMenuPermission, loginRequired } from '@/common/auth'
-import { intParam, jsonBody, queryString } from '@/common/http'
+import { intParam, queryString } from '@/common/http'
+import { routeBody } from '@/common/validation'
 import { parsePagination } from '@/common/pagination'
+import { notificationBody } from './schema'
 import { NotificationService } from './service'
 
 const USER_NOT_FOUND = { error: '用户不存在' }
@@ -16,7 +18,7 @@ const USER_NOT_FOUND = { error: '用户不存在' }
 export async function registerNotificationRoutes(app: FastifyInstance): Promise<void> {
   const service = new NotificationService(app.db)
   const opts = { preHandler: loginRequired }
-  // Ids beyond the integer range don't hit get_or_404; they fall through to the service's not-found-or-forbidden 404 (a plain conditional query there)
+  // Ids beyond the integer range don't hit getOr404; they fall through to the service's not-found-or-forbidden 404 (a plain conditional query there)
   const notiIdOf = (request: FastifyRequest) => Number((request.params as { noti_id: string }).noti_id)
 
   app.get('/api/admin/notifications', opts, async (request, reply) => {
@@ -27,13 +29,14 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
     return service.listItems(user.id, page, per_page, isReadFilter)
   })
 
-  app.post('/api/admin/notifications', opts, async (request, reply) => {
+  const notificationInput = routeBody(notificationBody, 'create')
+  app.post('/api/admin/notifications', { ...opts, ...notificationInput.route }, async (request, reply) => {
     const user = await getCurrentAdminUser(request)
     if (!user) return reply.status(404).send(USER_NOT_FOUND)
     if (!(await hasMenuPermission(request, 'system_notifications_add'))) {
       return reply.status(403).send({ error: '无权限创建通知' })
     }
-    return reply.status(201).send(await service.createItem(jsonBody(request)))
+    return reply.status(201).send(await service.createItem(notificationInput.parse(request)))
   })
 
   app.get('/api/admin/notifications/unread-count', opts, async (request) => {

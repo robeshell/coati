@@ -19,6 +19,7 @@ RUN pnpm config set registry ${NPM_REGISTRY} && \
     CI=true pnpm install --frozen-lockfile
 
 COPY apps/ apps/
+COPY docs/apifox-full.openapi.json docs/apifox-full.openapi.json
 RUN pnpm --filter @coati/web build && \
     pnpm --filter @coati/api build && \
     CI=true pnpm --filter @coati/api deploy --prod --legacy /out
@@ -49,6 +50,7 @@ RUN chmod +x docker-entrypoint.sh && \
     chown -R appuser:appuser /app/instance
 
 ENV NODE_ENV=production \
+    APP_NAME=Coati \
     PORT=5000 \
     WEB_DIST_DIR=/app/web \
     INSTANCE_DIR=/app/instance \

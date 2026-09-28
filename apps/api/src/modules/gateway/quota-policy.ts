@@ -6,7 +6,7 @@ export function defaultDailyQuota(value = process.env.AGENT_DAILY_TOKEN_QUOTA) {
   return number
 }
 
-/** Match Python's reservation lifetime (independent of provider socket deadlines). */
+/** Match The gateway's reservation lifetime (independent of provider socket deadlines). */
 export function reservationTtlSeconds(value = process.env.AGENT_QUOTA_RESERVATION_TTL_SECONDS) {
   const parsed = Number(value || 3600)
   if (!Number.isSafeInteger(parsed)) throw new Error('AGENT_QUOTA_RESERVATION_TTL_SECONDS must be an integer')

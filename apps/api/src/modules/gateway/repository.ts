@@ -5,7 +5,7 @@ import {
   gw_keys,
   gw_public_routes,
   gw_requests,
-  gw_route_migrations,
+  gw_route_operations,
   gw_routes,
   gw_session_bindings,
   gw_upstream_leases,
@@ -20,13 +20,13 @@ import { DeviceRepository } from './device-repository'
 import { personalModelNames, personalRoute } from './personal-route'
 import { automaticRoute, poolRoute, type Candidate, type ResolvedRoute } from './pool-route'
 import { defaultDailyQuota } from './quota-policy'
-import { routeMigrationPreflight } from './route-preflight'
+import { routeConsolidationPreflight } from './route-preflight'
 import { schedulingPolicy as loadSchedulingPolicy, type SchedulingPolicy } from './scheduling-policy'
 import { GatewayError } from './schema'
 import { affinityModelKey } from './session-affinity'
 import { gatewayTimezone } from './timezone'
 import type { UsageScope } from './usage-analytics-repository'
-// Python bills completed output, including partial streams/client cancellation.
+// Gateway bills completed output, including partial streams/client cancellation.
 // Expired/interrupted workers retain an audit record, never a fabricated charge.
 const platformAccount = () =>
   and(
@@ -36,7 +36,7 @@ const platformAccount = () =>
 const billable = sql`${gw_requests.status} in ('ok','stream_error','client_error','cancelled')`
 const billedTokens = sql`case when ${billable} then ${gw_requests.input_tokens}+${gw_requests.output_tokens} else 0 end`
 export type UpstreamRow = typeof gw_upstreams.$inferSelect
-export type RouteMigrationAccount = Pick<
+export type RouteConsolidationAccount = Pick<
   UpstreamRow,
   | 'id'
   | 'name'
@@ -87,7 +87,7 @@ export class GatewayRepository {
       .where(platformAccount())
       .orderBy(asc(gw_upstreams.id))
   }
-  async legacyAccountPage(
+  async accountPage(
     query: {
       page: number
       per_page: number
@@ -106,7 +106,7 @@ export class GatewayRepository {
             eq(gw_upstreams.scope, 'personal'),
             eq(gw_upstreams.owner_user_id, owner),
           )
-    // Search must use the public Python protocol names, including their suffixes.
+    // Search must use the public Gateway protocol names, including their suffixes.
     const protocol = sql<string>`case ${gw_upstreams.protocol}
       when 'openai' then 'openai-chat'
       when 'responses' then 'openai-responses'
@@ -252,7 +252,7 @@ export class GatewayRepository {
           .returning()
     return rows[0]
   }
-  private async migrationSnapshot(tx: Pick<Db, 'select'>) {
+  private async consolidationSnapshot(tx: Pick<Db, 'select'>) {
     const routes = await tx.select().from(gw_routes).orderBy(asc(gw_routes.id))
     const accounts = await tx
       .select({
@@ -276,17 +276,17 @@ export class GatewayRepository {
       .orderBy(asc(gw_public_routes.id))
     return { routes, accounts, publicRoutes }
   }
-  routeMigrationSnapshot() {
-    return this.db.transaction((tx) => this.migrationSnapshot(tx), {
+  routeConsolidationSnapshot() {
+    return this.db.transaction((tx) => this.consolidationSnapshot(tx), {
       isolationLevel: 'repeatable read',
       accessMode: 'read only',
     })
   }
-  routeMigrations() {
+  routeConsolidations() {
     return this.db
       .select()
-      .from(gw_route_migrations)
-      .orderBy(desc(gw_route_migrations.created_at))
+      .from(gw_route_operations)
+      .orderBy(desc(gw_route_operations.created_at))
   }
   private samePublicRoute(
     current: typeof gw_public_routes.$inferSelect | undefined,
@@ -299,7 +299,7 @@ export class GatewayRepository {
       )
     )
   }
-  async applyRouteMigration(
+  async applyRouteConsolidation(
     model: string,
     version: string,
     actor: number,
@@ -310,17 +310,17 @@ export class GatewayRepository {
       // checking the entire snapshot. Never hold these locks during upstream I/O.
       await tx.execute(sql`set local lock_timeout = '2s'`)
       await tx.execute(
-        sql`lock table gw_routes, gw_public_routes, gw_upstreams, gw_route_migrations in exclusive mode`,
+        sql`lock table gw_routes, gw_public_routes, gw_upstreams, gw_route_operations in exclusive mode`,
       )
-      const snapshot = await this.migrationSnapshot(tx)
+      const snapshot = await this.consolidationSnapshot(tx)
       const previous = await tx
         .select()
-        .from(gw_route_migrations)
+        .from(gw_route_operations)
         .where(
           and(
-            eq(gw_route_migrations.model, model),
-            eq(gw_route_migrations.version, version),
-            sql`${gw_route_migrations.rolled_back_at} is null`,
+            eq(gw_route_operations.model, model),
+            eq(gw_route_operations.version, version),
+            sql`${gw_route_operations.rolled_back_at} is null`,
           ),
         )
       if (previous[0]) {
@@ -332,23 +332,23 @@ export class GatewayRepository {
             previous[0].public_route,
           )
         )
-          throw new GatewayError(409, '迁移后配置已变化，请重新检查')
+          throw new GatewayError(409, '整合后配置已变化，请重新检查')
         return previous[0]
       }
-      const item = routeMigrationPreflight(snapshot, allowPrivate).items.find(
+      const item = routeConsolidationPreflight(snapshot, allowPrivate).items.find(
         (row) => row.model === model,
       )
       if (!item || item.version !== version)
         throw new GatewayError(409, '配置已变化，请重新预检')
       if (item.status !== 'ready_for_review' || !item.proposal)
-        throw new GatewayError(409, '该模型不能自动迁移，请先处理预检差异')
+        throw new GatewayError(409, '该模型不能自动整合，请先处理预检差异')
       const sources = snapshot.routes.filter((row) => row.model === model)
       const [created] = await tx
         .insert(gw_public_routes)
         .values(item.proposal)
         .returning()
       const [journal] = await tx
-        .insert(gw_route_migrations)
+        .insert(gw_route_operations)
         .values({
           model,
           version,
@@ -366,19 +366,19 @@ export class GatewayRepository {
       return journal!
     })
   }
-  async rollbackRouteMigration(id: string, actor: number) {
+  async rollbackRouteConsolidation(id: string, actor: number) {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`set local lock_timeout = '2s'`)
       await tx.execute(
-        sql`lock table gw_routes, gw_public_routes, gw_upstreams, gw_route_migrations in exclusive mode`,
+        sql`lock table gw_routes, gw_public_routes, gw_upstreams, gw_route_operations in exclusive mode`,
       )
       const [journal] = await tx
         .select()
-        .from(gw_route_migrations)
-        .where(eq(gw_route_migrations.id, id))
-      if (!journal) throw new GatewayError(404, '迁移记录不存在')
+        .from(gw_route_operations)
+        .where(eq(gw_route_operations.id, id))
+      if (!journal) throw new GatewayError(404, '整合记录不存在')
       if (journal.rolled_back_at) return journal
-      const snapshot = await this.migrationSnapshot(tx)
+      const snapshot = await this.consolidationSnapshot(tx)
       if (
         !this.samePublicRoute(
           snapshot.publicRoutes.find(
@@ -410,9 +410,9 @@ export class GatewayRepository {
         .delete(gw_public_routes)
         .where(eq(gw_public_routes.id, journal.public_route.id))
       const [updated] = await tx
-        .update(gw_route_migrations)
+        .update(gw_route_operations)
         .set({ rolled_back_at: sql`clock_timestamp()`, rolled_back_by: actor })
-        .where(eq(gw_route_migrations.id, id))
+        .where(eq(gw_route_operations.id, id))
         .returning()
       return updated!
     })
@@ -554,7 +554,7 @@ export class GatewayRepository {
             .where(eq(gw_routes.model, values.model))
         ).length
       )
-        throw new GatewayError(409, '该模型已有候选路由，请先迁移现有配置')
+        throw new GatewayError(409, '该模型已有候选路由，请先整合现有配置')
       const [existing] = await tx
         .select()
         .from(gw_public_routes)
@@ -675,7 +675,7 @@ export class GatewayRepository {
       .set({ last_used_at: sql`clock_timestamp()` })
       .where(and(eq(gw_keys.id, id), eq(gw_keys.revoked, false)))
   }
-  async legacyPatUsage(
+  async accessTokenUsage(
     owner: number,
     keyId: number,
     filters: {
@@ -691,9 +691,9 @@ export class GatewayRepository {
       .from(gw_keys)
       .where(and(eq(gw_keys.id, keyId), eq(gw_keys.owner_id, owner), sql`${gw_keys.kind} <> 'internal-cache'`))
     if (!key) return null
-    return this.legacyMineUsage(owner, filters, keyId)
+    return this.personalUsage(owner, filters, keyId)
   }
-  async legacyMineUsage(
+  async personalUsage(
     owner: number,
     filters: {
       page: number
@@ -705,9 +705,9 @@ export class GatewayRepository {
     },
     keyId?: number,
   ) {
-    return this.legacyUsagePage({ kind: 'personal', owner }, filters, keyId)
+    return this.usagePage({ kind: 'personal', owner }, filters, keyId)
   }
-  async legacyUsagePage(
+  async usagePage(
     scope: UsageScope,
     filters: {
       page: number
@@ -750,7 +750,7 @@ export class GatewayRepository {
         >`(select upstream_id from gw_attempts where request_id=gw_requests.id order by id desc limit 1)`,
         pat_name: gw_keys.name,
         pat_token_type: gw_keys.kind,
-        legacy_status: status,
+        display_status: status,
         attempt_count: sql<number>`(select count(*)::int from gw_attempts where gw_attempts.request_id=gw_requests.id)`,
       })
       .from(gw_requests)
@@ -766,7 +766,7 @@ export class GatewayRepository {
       .where(where)
     return { rows, total: count!.total }
   }
-  async legacyKeyPage(
+  async accessKeyPage(
     owner: number,
     page: number,
     perPage: number,

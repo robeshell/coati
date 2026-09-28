@@ -36,7 +36,7 @@ test('encrypted overrides preserve blank secrets, clear suppresses env fallback,
   await settings.save({provider:'',timeout_seconds:15})
   expect(await settings.provider()).toBeNull()
 })
-test('admin and legacy endpoints enforce permissions and never return credentials',async()=>{
+test('admin and alternate endpoints enforce permissions and never return credentials',async()=>{
   const path='/api/admin/gateway/web-search'
   expect((await ordinary.inject({url:path})).statusCode).toBe(403)
   expect((await ordinary.inject({method:'PUT',url:path,payload:{provider:'tavily'}})).statusCode).toBe(403)

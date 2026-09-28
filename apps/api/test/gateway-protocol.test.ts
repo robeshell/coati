@@ -190,7 +190,7 @@ test('Responses reasoning text parts are accepted for bridge reasoning policy', 
       expect(() => assertResponseContent({ type, part: { type: 'reasoning_text', text: 'Reasoning' } }, 'responses', target)).not.toThrow()
 })
 
-test('Messages thinking follows the Python medium approximation for Responses', () => {
+test('Messages thinking follows the Gateway medium approximation for Responses', () => {
   for (const type of ['enabled', 'adaptive']) {
     const body = { model: 'm', messages: [], thinking: { type, budget_tokens: 2048 } }
     expect(bridgeRequest(body, 'anthropic', 'responses').reasoning).toEqual({ effort: 'medium' })
@@ -198,7 +198,7 @@ test('Messages thinking follows the Python medium approximation for Responses', 
   }
 })
 
-test('default Python compatibility drops unknown controls while strict remains selectable', () => {
+test('default Gateway contract drops unknown controls while strict remains selectable', () => {
   const body = { model: 'm', messages: [], custom_vendor_option: true, seed: 7 }
   expect(convertRequest(body, 'openai', 'anthropic')).not.toHaveProperty('custom_vendor_option')
   expect(() => convertRequest(body, 'openai', 'anthropic', { compatibilityPolicy: 'strict' })).toThrow()

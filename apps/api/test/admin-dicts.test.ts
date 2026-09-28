@@ -18,7 +18,6 @@ import {
 } from './helpers'
 
 const P = 'ck_test_r2_t_'
-const INTERNAL = { error: '服务器内部错误，请稍后重试' }
 let app: FastifyInstance
 let handle: DbHandle
 let s: AuthedSession
@@ -67,11 +66,11 @@ afterAll(async () => {
 describe('dicts：字典类型', () => {
   let typeId: number
 
-  it('新增 → 201，None 值走默认值（sort_order=0, is_active=true），名称/编码去空白', async () => {
+  it('新增 → 201，null 走默认值（sort_order=0, is_active=true），文本去空白', async () => {
     const res = await s.inject({
       method: 'POST',
       url: '/api/admin/dicts',
-      payload: { name: ' 测试字典 ', code: ` ${P}a `, sort_order: null, is_active: null, description: 5 },
+      payload: { name: ' 测试字典 ', code: ` ${P}a `, sort_order: null, is_active: null, description: ' 说明 ' },
     })
     expect(res.statusCode).toBe(201)
     const body = res.json()
@@ -79,7 +78,7 @@ describe('dicts：字典类型', () => {
     expect(body).toMatchObject({
       name: '测试字典',
       code: `${P}a`,
-      description: '5',
+      description: '说明',
       sort_order: 0,
       is_active: true,
       item_count: 0,
@@ -87,19 +86,30 @@ describe('dicts：字典类型', () => {
     expect(Object.keys(body).sort()).toEqual(
       ['code', 'created_at', 'description', 'id', 'is_active', 'item_count', 'name', 'sort_order', 'updated_at'].sort(),
     )
-    expect(body.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?$/)
+    expect(body.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/)
   })
 
-  it('新增校验：名称/编码为空、编码重复、非法布尔/整数 → 500 且不落库', async () => {
+  it('新增校验：名称/编码为空、编码重复、类型不符 → 400 且不落库', async () => {
     const post = (payload: unknown) => s.inject({ method: 'POST', url: '/api/admin/dicts', payload: payload as object })
     expect((await post({ code: 'x' })).json()).toEqual({ error: '字典名称不能为空' })
     expect((await post({ name: 'x' })).json()).toEqual({ error: '字典编码不能为空' })
     expect((await post({ name: 'x', code: `${P}a` })).json()).toEqual({ error: '字典编码已存在' })
-    for (const bad of [{ is_active: 'yes' }, { sort_order: 'abc' }, { sort_order: true }, { description: { a: 1 } }]) {
+    expect((await post({ name: ' ', code: 'x' })).json()).toEqual({ error: '字典名称不能为空' })
+    const cases: Array<[object, string]> = [
+      [{ is_active: 'yes' }, '是否启用的值无效'],
+      [{ is_active: 1 }, '是否启用的值无效'],
+      [{ sort_order: 'abc' }, '排序的值无效'],
+      [{ sort_order: '5' }, '排序的值无效'],
+      [{ sort_order: 1.5 }, '排序的值无效'],
+      [{ sort_order: true }, '排序的值无效'],
+      [{ description: { a: 1 } }, '描述的值无效'],
+      [{ name: 5 }, '字典名称的值无效'],
+    ]
+    for (const [bad, error] of cases) {
       const res = await post({ name: 'x', code: `${P}bad`, ...bad })
-      expect(res.statusCode).toBe(500)
-      expect(res.json()).toEqual(INTERNAL)
+      expect([res.statusCode, res.json()], JSON.stringify(bad)).toEqual([400, { error }])
     }
+    expect((await post([1])).json()).toEqual({ error: '请求参数格式不正确' })
     expect(await handle.db.select().from(dict_types).where(eq(dict_types.code, `${P}bad`))).toHaveLength(0)
   })
 
@@ -116,15 +126,18 @@ describe('dicts：字典类型', () => {
     expect(byName.items.map((i: { code: string }) => i.code)).toContain(`${P}b`)
   })
 
-  it('编辑：同值/空 body 不改 updated_at；原始值落库（不去空白）；编码重复 400；404 先于 403', async () => {
+  it('编辑：同值/空 body 不改 updated_at；只改传入的字段并去空白；类型不符 / 编码重复 400；403 先于 404', async () => {
     const [before] = await handle.db.select().from(dict_types).where(eq(dict_types.id, typeId))
-    const same = await s.inject({ method: 'PUT', url: `/api/admin/dicts/${typeId}`, payload: { name: '测试字典', sort_order: false, is_active: 1 } })
+    const same = await s.inject({ method: 'PUT', url: `/api/admin/dicts/${typeId}`, payload: { name: ' 测试字典 ', sort_order: 0, is_active: true } })
     expect(same.statusCode).toBe(200)
     const [after] = await handle.db.select().from(dict_types).where(eq(dict_types.id, typeId))
     expect(after!.updated_at).toBe(before!.updated_at)
 
-    const changed = await s.inject({ method: 'PUT', url: `/api/admin/dicts/${typeId}`, payload: { name: ' 改名 ', sort_order: 3.5 } })
-    expect(changed.json()).toMatchObject({ name: ' 改名 ', sort_order: 4 })
+    expect((await s.inject({ method: 'PUT', url: `/api/admin/dicts/${typeId}`, payload: { sort_order: 3.5 } })).json()).toEqual({
+      error: '排序的值无效',
+    })
+    const changed = await s.inject({ method: 'PUT', url: `/api/admin/dicts/${typeId}`, payload: { name: ' 改名 ', sort_order: 4 } })
+    expect(changed.json()).toMatchObject({ name: '改名', code: `${P}a`, description: '说明', sort_order: 4 })
     const [after2] = await handle.db.select().from(dict_types).where(eq(dict_types.id, typeId))
     expect(after2!.updated_at).not.toBe(before!.updated_at)
 
@@ -164,7 +177,7 @@ describe('dicts：字典项', () => {
     const rb = await s.inject({
       method: 'POST',
       url: `/api/admin/dicts/${typeId}/items`,
-      payload: { label: '乙', value: 'b', is_default: 1, sort_order: null, is_active: null },
+      payload: { label: '乙', value: 'b', is_default: true, sort_order: null, is_active: null },
     })
     expect(rb.json()).toMatchObject({ sort_order: 0, is_active: true, is_default: true })
     b = rb.json().id
@@ -175,9 +188,8 @@ describe('dicts：字典项', () => {
     expect((await post({ value: 'x' })).json()).toEqual({ error: '字典标签不能为空' })
     expect((await post({ label: 'x' })).json()).toEqual({ error: '字典值不能为空' })
     expect((await post({ label: 'x', value: 'a' })).json()).toEqual({ error: '同一字典下字典值不能重复' })
-    // is_default is an invalid boolean: clearing the default then failing the insert → the whole thing rolls back, b is still the default
-    const bad = await post({ label: 'x', value: 'zz', is_default: 'yes' })
-    expect(bad.statusCode).toBe(500)
+    // An invalid body is rejected before anything is written: b is still the default
+    expect((await post({ label: 'x', value: 'zz', is_default: 'yes' })).json()).toEqual({ error: '是否默认的值无效' })
     expect((await itemsOf(typeId)).find((r) => r.id === b)!.is_default).toBe(true)
   })
 
@@ -186,7 +198,7 @@ describe('dicts：字典项', () => {
     expect(Object.keys(res).sort()).toEqual(['dict_type', 'items', 'total'])
     expect(res.items.map((i: { value: string }) => i.value)).toEqual(['b', 'a'])
     expect(res.dict_type.item_count).toBe(2)
-    expect(res.items[0].dict_type_name).toBe(' 改名 ')
+    expect(res.items[0].dict_type_name).toBe('改名')
     expect((await s.inject({ url: `/api/admin/dicts/${typeId}/items?search=${encodeURIComponent('甲')}` })).json().total).toBe(1)
     expect((await s.inject({ url: `/api/admin/dicts/${typeId}/items?is_active=false` })).json().total).toBe(0)
     const detail = (await s.inject({ url: `/api/admin/dicts/${typeId}?include_items=1` })).json()
@@ -207,7 +219,7 @@ describe('dicts：字典项', () => {
     await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${a}`, payload: { is_active: true } })
   })
 
-  it('编辑：默认项互斥、类型迁移、值重复、唯一约束冲突 → 500 回滚', async () => {
+  it('编辑：默认项互斥、类型迁移、值重复、唯一约束冲突 → 400 回滚', async () => {
     const res = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${a}`, payload: { is_default: true } })
     expect(res.json()).toMatchObject({ is_default: true })
     expect((await itemsOf(typeId)).find((r) => r.id === b)!.is_default).toBe(false)
@@ -222,17 +234,19 @@ describe('dicts：字典项', () => {
       error: '字典标签不能为空',
     })
 
-    // The raw value (with whitespace) is stored; the duplicate check uses the trimmed value, so the ' c ' vs ' c ' conflict is only caught by the unique constraint at commit
+    // Values are trimmed, so ' c ' and 'c' are the same value
     const spaced = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${b}`, payload: { value: ' c ' } })
-    expect(spaced.json().value).toBe(' c ')
-    const conflict = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${a}`, payload: { value: ' c ', is_default: true, label: '冲突' } })
-    expect(conflict.statusCode).toBe(500)
-    expect(conflict.json()).toEqual(INTERNAL)
+    expect(spaced.json().value).toBe('c')
+    const conflict = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${a}`, payload: { value: 'c', is_default: true, label: '冲突' } })
+    expect(conflict.json()).toEqual({ error: '同一字典下字典值不能重复' })
     const [stillA] = await handle.db.select().from(dict_items).where(eq(dict_items.id, a))
     expect(stillA).toMatchObject({ value: 'a', label: '甲' })
 
     // Move to another dict type
-    const moved = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${b}`, payload: { dict_type_id: String(otherTypeId), value: 'b' } })
+    expect((await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${b}`, payload: { dict_type_id: String(otherTypeId) } })).json()).toEqual({
+      error: '字典类型的值无效',
+    })
+    const moved = await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${b}`, payload: { dict_type_id: otherTypeId, value: 'b' } })
     expect(moved.json()).toMatchObject({ dict_type_id: otherTypeId, dict_type_code: `${P}b`, value: 'b' })
     await s.inject({ method: 'PUT', url: `/api/admin/dicts/items/${b}`, payload: { dict_type_id: typeId } })
   })
@@ -247,7 +261,7 @@ describe('dicts：字典项', () => {
     expect(csv.headers['content-disposition']).toBe(`attachment; filename=dict_${P}a_items.csv`)
     expect(csv.headers['content-type']).toBe('text/csv; charset=utf-8')
     expect(csv.body).toBe(
-      '﻿字典标签,字典值,标签颜色,排序,是否默认,是否启用,备注\r\n' +
+      '\uFEFF字典标签,字典值,标签颜色,排序,是否默认,是否启用,备注\r\n' +
         '乙,b,,0,否,是,\r\n' +
         '甲,a,red,2,是,是,\r\n' +
         "'=SUM(1),'-x,,9,否,否,\"备注,逗号\"\r\n",
@@ -260,10 +274,10 @@ describe('dicts：字典项', () => {
 
     const tpl = await s.inject({ url: `/api/admin/dicts/${typeId}/items/template?file_type=xls` })
     expect(tpl.headers['content-disposition']).toBe(`attachment; filename=dict_${P}a_import_template.csv`)
-    expect(tpl.body).toBe('﻿字典标签,字典值,标签颜色,排序,是否默认,是否启用,备注\r\n示例标签,sample_value,#1677ff,0,否,是,可选\r\n')
+    expect(tpl.body).toBe('\uFEFF字典标签,字典值,标签颜色,排序,是否默认,是否启用,备注\r\n示例标签,sample_value,#1677ff,0,否,是,可选\r\n')
   })
 
-  it('导入：新增 + 更新（空排序沿用原值）+ 默认项互斥；旧英文表头与 xlsx', async () => {
+  it('导入：新增 + 更新（空排序沿用原值）+ 默认项互斥；xlsx', async () => {
     const file = multipartFile(
       'd.csv',
       '字典标签,字典值,标签颜色,排序,是否默认,是否启用,备注\n' +
@@ -280,7 +294,7 @@ describe('dicts：字典项', () => {
     expect(byValue.n2).toMatchObject({ is_default: false, is_active: true, sort_order: 0, description: null })
     expect(rows.filter((r) => r.is_default).map((r) => r.value)).toEqual(['n1'])
 
-    const xlsx = multipartFile('d.xlsx', await xlsxBuffer([[' label ', 'value', 'is_default'], ['X', 'n3', 'yes'], [null, null, null]]))
+    const xlsx = multipartFile('d.xlsx', await xlsxBuffer([[' 字典标签 ', '字典值', '是否默认'], ['X', 'n3', 'yes'], [null, null, null]]))
     const res2 = await s.inject({ method: 'POST', url: `/api/admin/dicts/${typeId}/items/import`, ...xlsx })
     expect(res2.json()).toEqual({ message: '导入成功', created: 1, updated: 0 })
     expect((await itemsOf(typeId)).filter((r) => r.is_default).map((r) => r.value)).toEqual(['n3'])
@@ -318,7 +332,7 @@ describe('dicts：字典项', () => {
 })
 
 describe('dicts：权限', () => {
-  it('无权限用户：各接口 403 文案；带 id 的路由先 404 后 403', async () => {
+  it('无权限用户：各接口 403 文案；带 id 的路由先 403 后 404', async () => {
     const [t] = await handle.db.select().from(dict_types).where(eq(dict_types.code, `${P}b`))
     const id = t!.id
     const [item] = await handle.db
@@ -327,12 +341,12 @@ describe('dicts：权限', () => {
       .returning()
     const cases: [string, string, string][] = [
       ['GET', '/api/admin/dicts', '无权限查看数据字典'],
-      ['POST', '/api/admin/dicts', '无权限新增数据字典'],
+      ['POST', '/api/admin/dicts', '无权限新建数据字典'],
       ['GET', `/api/admin/dicts/${id}`, '无权限查看数据字典'],
       ['PUT', `/api/admin/dicts/${id}`, '无权限编辑数据字典'],
       ['DELETE', `/api/admin/dicts/${id}`, '无权限删除数据字典'],
       ['GET', `/api/admin/dicts/${id}/items`, '无权限查看字典项'],
-      ['POST', `/api/admin/dicts/${id}/items`, '无权限新增字典项'],
+      ['POST', `/api/admin/dicts/${id}/items`, '无权限新建字典项'],
       ['GET', `/api/admin/dicts/${id}/items/export`, '无权限导出字典项'],
       ['GET', `/api/admin/dicts/${id}/items/template`, '无权限下载模板'],
       ['POST', `/api/admin/dicts/${id}/items/import`, '无权限导入字典项'],
@@ -345,11 +359,11 @@ describe('dicts：权限', () => {
       expect([res.statusCode, res.json()], `${method} ${url}`).toEqual([403, { error }])
     }
     for (const url of ['/api/admin/dicts/99999999', '/api/admin/dicts/99999999/items', '/api/admin/dicts/items/99999999']) {
-      expect((await u.inject({ url })).json()).toEqual({ error: '资源不存在' })
+      expect((await u.inject({ url })).statusCode, url).toBe(403)
     }
     // Not logged in
     const anon = await app.inject({ url: '/api/admin/dicts/options?codes=a' })
-    expect([anon.statusCode, anon.json()]).toEqual([401, { error: '未授权访问', redirect: '/admin/login' }])
+    expect([anon.statusCode, anon.json()]).toEqual([401, { error: '未授权访问', redirect: '/login' }])
     await handle.db.delete(dict_items).where(inArray(dict_items.id, [item!.id]))
   })
 })

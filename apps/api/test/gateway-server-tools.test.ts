@@ -355,7 +355,7 @@ test('partial round usage retains reported cache totals and labels incompletenes
   }
 })
 
-test('server-tool max uses preserves Python zero, large and malformed values', () => {
+test('server-tool max uses preserves Gateway zero, large and malformed values', () => {
   const max = (value: unknown) => serverToolConfigs({ tools: [{ type: 'web_search_20250305', max_uses: value }] })[0]!.max
   expect([max(0), max(12), max(-1), max('9'), max('invalid')]).toEqual([0, 12, 0, 9, 5])
 })
@@ -384,7 +384,7 @@ test.each(['native-pending', 'native-leaked'])('Messages streaming handles %s be
 })
 
 
-test('Messages replays Python search and fetch history without declaring tools again', async () => {
+test('Messages replays Gateway search and fetch history without declaring tools again', async () => {
   const account = (await gateway.repo.upstreams()).find(row => row.name === 'tool-loop-fixture')!
   await db.db.execute(sql`update gw_upstreams set protocol='anthropic' where id=${account.id}`)
   const nativeAccount = (await gateway.repo.upstreams()).find(row => row.id === account.id)!

@@ -1,4 +1,4 @@
-/** Python parse_upstream_error_body: JSON, SSE data, then at most two message wrappers. */
+/** Gateway parse_upstream_error_body: JSON, SSE data, then at most two message wrappers. */
 export function parseUpstreamErrorBody(raw: string): unknown {
   const text = raw.trim()
   if (!text) return undefined

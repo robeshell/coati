@@ -295,6 +295,20 @@
       "when": 1790422344394,
       "tag": "0041_gateway_personal_export_group",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790597048190,
+      "tag": "0042_upstream_v0_3_0",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790601534971,
+      "tag": "0043_gateway_storage_names",
+      "breakpoints": true
     }
   ]
 }

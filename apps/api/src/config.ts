@@ -11,33 +11,63 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { config as loadDotenv } from 'dotenv'
 import { z } from 'zod'
+import { collectSettingsEnv, type SettingEnvName } from './common/settings-env'
 
 export type AppEnv = 'development' | 'production' | 'test'
 
 const API_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_ROOT = resolve(API_ROOT, '../..')
 
+export const DEFAULT_UPLOAD_TYPES = 'jpg,jpeg,png,gif,webp,pdf,txt,csv,doc,docx,xls,xlsx,ppt,pptx,zip'
+
 export interface AppConfig {
   env: AppEnv
+  /**
+   * APP_NAME: the product name the server shows (authenticator apps, mails, the AI assistant, logs); default
+   * Coati. The frontend's is VITE_APP_NAME
+   */
+  appName: string
   isProduction: boolean
   port: number
   databaseUrl: string
   secretKey: string
   adminUsername: string
   adminPassword: string
-  /** Request body limit (bytes), MAX_CONTENT_LENGTH */
+  /** Request body limit (bytes), BODY_LIMIT */
+  bodyLimit: number
   maxContentLength: number
   trustedProxies: string[]
+  instanceDir: string
   sessionTtlHours: number
-  /** SESSION_COOKIE_SECURE: true/false forces it; empty = auto (by request protocol, Secure only over TLS) */
+  /** COOKIE_SECURE: true/false forces it; empty = auto (by request protocol, Secure only over TLS) */
   sessionCookieSecure: boolean | 'auto'
   corsOrigins: string[]
-  loginMaxFailures: number
-  loginLockoutMinutes: number
+  /** RATE_LIMIT_ENABLED (default true): per-IP request limits; the limits themselves are in system settings */
+  rateLimitEnabled: boolean
   /** Frontend build output dir (apps/web/dist); if missing, the SPA fallback returns a JSON hint */
   webDistDir: string
-  /** Runtime data dir (instance/; uploads live in instance/uploads/...) */
-  instanceDir: string
+  /** DATA_DIR: runtime data dir (default apps/api/instance; uploads live in <dataDir>/uploads/...) */
+  dataDir: string
+
+  // ---- System settings pinned by environment variables ----
+  /**
+   * Raw values of the variables in SETTING_ENV_NAMES that are set and non-empty (mail, file storage, uploads, AI,
+   * site URL, login lockout). SettingsStore validates them and lets them override the settings page.
+   */
+  settingsEnv: Partial<Record<SettingEnvName, string>>
+  /** STORAGE_LOCAL_DIR: directory of the `local` file storage driver, default <dataDir>/uploads/files */
+  storageLocalDir: string
+  /**
+   * MAIL_DRIVER: '' = SMTP when configured in system settings; 'log' = print mails to the server log instead of
+   * sending (development); 'none' = never send
+   */
+  mailDriver: '' | 'log' | 'none'
+  /**
+   * SETTINGS_ALLOW_PRIVATE_NETWORK: whether SMTP / S3 / AI addresses typed on the settings page may point into
+   * internal networks (loopback, 10/8, 192.168/16 …). Default: on in development / test, off in production.
+   * Cloud metadata / link-local addresses are always refused (common/outbound.ts)
+   */
+  settingsAllowPrivateNetwork: boolean
 
   // ---- Public demo ----
   /** DEMO_MODE: system management becomes read-only, the demo account is shown on the login page, sample data resets periodically */
@@ -56,13 +86,10 @@ export interface AppConfig {
   /** When true, run the scheduler loop inside the web process; otherwise use the standalone `node dist/worker.js` process */
   runSchedulerInWeb: boolean
 
-  // ---- AI (OpenAI-compatible API) ----
-  aiApiBase: string
-  aiApiKey: string
-  aiModel: string
+  // ---- AI SQL ----
   /**
    * Read-only connection string for AI SQL. Production: AI_SQL_DATABASE_URL, or derived from DATABASE_URL with the
-   * coati_node_ro role when POSTGRES_RO_PASSWORD is set; otherwise startup fails (fail-closed).
+   * castor_kit_ro role when POSTGRES_RO_PASSWORD is set; otherwise startup fails (fail-closed).
    * Development falls back to the main DB URL (connection params still force read-only).
    */
   aiSqlDatabaseUrl: string
@@ -84,6 +111,7 @@ const intFromEnv = (fallback: number) =>
     .pipe(z.number().int())
 
 const envSchema = z.object({
+  APP_NAME: z.string().optional().default(''),
   PORT: z.string().optional(),
   DATABASE_URL: z.string().optional(),
   DEV_DATABASE_URL: z.string().optional(),
@@ -91,14 +119,16 @@ const envSchema = z.object({
   SECRET_KEY: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
   TRUSTED_PROXIES: z.string().default(''),
-  MAX_CONTENT_LENGTH: intFromEnv(16 * 1024 * 1024),
-  SESSION_TTL_HOURS: intFromEnv(8),
-  SESSION_COOKIE_SECURE: z.string().optional().default(''),
-  CORS_ORIGINS: z.string().optional().default(''),
-  LOGIN_MAX_FAILURES: intFromEnv(10),
-  LOGIN_LOCKOUT_MINUTES: intFromEnv(15),
-  WEB_DIST_DIR: z.string().optional(),
+  MAX_CONTENT_LENGTH: z.string().optional(),
   INSTANCE_DIR: z.string().optional(),
+  BODY_LIMIT: intFromEnv(16 * 1024 * 1024),
+  SESSION_TTL_HOURS: intFromEnv(8),
+  SESSION_COOKIE_SECURE: z.string().optional(),
+  COOKIE_SECURE: z.string().optional().default(''),
+  CORS_ORIGINS: z.string().optional().default(''),
+  RATE_LIMIT_ENABLED: z.string().optional().default('true'),
+  WEB_DIST_DIR: z.string().optional(),
+  DATA_DIR: z.string().optional(),
   DEMO_MODE: z.string().optional().default('false'),
   DEMO_RESET_HOURS: intFromEnv(24),
   DEMO_AI_HOURLY_PER_IP: intFromEnv(20),
@@ -108,15 +138,15 @@ const envSchema = z.object({
   TASK_SCHEDULER_INTERVAL_SECONDS: intFromEnv(20),
   TASK_SCHEDULER_LEASE_SECONDS: intFromEnv(1800),
   RUN_SCHEDULER_IN_WEB: z.string().optional().default('false'),
-  AI_API_BASE: z.string().optional().default(''),
-  AI_API_KEY: z.string().optional().default(''),
-  AI_MODEL: z.string().optional().default(''),
   AI_SQL_DATABASE_URL: z.string().optional(),
   AI_SQL_STATEMENT_TIMEOUT_MS: intFromEnv(5000),
   POSTGRES_RO_PASSWORD: z.string().optional().default(''),
   APIFOX_PROJECT_ID: z.string().optional().default(''),
   APIFOX_ACCESS_TOKEN: z.string().optional().default(''),
   APIFOX_API_VERSION: z.string().optional().default('2024-03-28'),
+  STORAGE_LOCAL_DIR: z.string().optional(),
+  MAIL_DRIVER: z.string().optional().default(''),
+  SETTINGS_ALLOW_PRIVATE_NETWORK: z.string().optional().default(''),
 })
 
 /** Boolean env var parsing: '1' / 'true' / 'yes' / 'on' are true (case-insensitive, whitespace-trimmed) */
@@ -140,7 +170,7 @@ function required(name: string, value: string | undefined, env: AppEnv, devFallb
   const trimmed = (value ?? '').trim()
   if (trimmed) return trimmed
   if (env === 'production') {
-    throw new Error(`生产环境必须设置 ${name}，请使用 setup.sh 生成 .env.production`)
+    throw new Error(`生产环境必须设置 ${name}，请使用 scripts/setup.sh 生成 .env.production`)
   }
   return devFallback
 }
@@ -161,9 +191,18 @@ function resolveAiSqlUrl(raw: string | undefined, env: AppEnv, mainUrl: string, 
   if (value) return value
   if (env === 'production' && roPassword) return deriveReadonlyUrl(mainUrl, roPassword)
   if (env === 'production') {
-    throw new Error('生产环境必须设置 AI_SQL_DATABASE_URL（指向非超级用户只读账号 coati_node_ro），拒绝回退到主库连接')
+    // Hidden gallery SQL must not prevent the gateway from starting; its pool fails closed on use.
+    return ''
   }
   return mainUrl
+}
+
+/** MAIL_DRIVER: only the development / kill-switch values; SMTP itself is configured in system settings */
+function resolveMailDriver(raw: string): AppConfig['mailDriver'] {
+  const value = raw.trim().toLowerCase()
+  if (value === '' || value === 'smtp') return ''
+  if (value === 'log' || value === 'none') return value
+  throw new Error(`MAIL_DRIVER 只能是 log 或 none（当前：${value}）`)
 }
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -178,27 +217,35 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         : parsed.DEV_DATABASE_URL || 'postgresql://localhost/coati_node_dev'
 
   const defaultPort = env === 'production' ? 5000 : env === 'test' ? 5002 : 5001
+  const dataDir = parsed.DATA_DIR ? resolve(parsed.DATA_DIR) : parsed.INSTANCE_DIR ? resolve(parsed.INSTANCE_DIR) : resolve(API_ROOT, 'instance')
 
   return {
     env,
+    appName: parsed.APP_NAME.trim() || 'Coati',
     isProduction: env === 'production',
     port: parsed.PORT ? Number(parsed.PORT) : defaultPort,
     databaseUrl,
     secretKey: required('SECRET_KEY', parsed.SECRET_KEY, env, 'dev-insecure-secret-key'),
     adminUsername: 'admin',
     adminPassword: required('ADMIN_PASSWORD', parsed.ADMIN_PASSWORD, env, 'admin123'),
-    maxContentLength: parsed.MAX_CONTENT_LENGTH,
+    bodyLimit: parsed.MAX_CONTENT_LENGTH ? Number(parsed.MAX_CONTENT_LENGTH) : parsed.BODY_LIMIT,
+    maxContentLength: parsed.MAX_CONTENT_LENGTH ? Number(parsed.MAX_CONTENT_LENGTH) : parsed.BODY_LIMIT,
     trustedProxies: parsed.TRUSTED_PROXIES.split(',').map((value) => value.trim()).filter(Boolean),
+    instanceDir: parsed.INSTANCE_DIR ? resolve(parsed.INSTANCE_DIR) : resolve(API_ROOT, 'instance'),
     sessionTtlHours: parsed.SESSION_TTL_HOURS,
-    sessionCookieSecure: parsed.SESSION_COOKIE_SECURE.trim() === '' ? 'auto' : isTruthy(parsed.SESSION_COOKIE_SECURE),
+    sessionCookieSecure: (parsed.SESSION_COOKIE_SECURE ?? parsed.COOKIE_SECURE).trim() === '' ? 'auto' : isTruthy(parsed.SESSION_COOKIE_SECURE ?? parsed.COOKIE_SECURE),
     corsOrigins: parsed.CORS_ORIGINS.split(',')
       .map((o) => o.trim())
       .filter(Boolean),
-    loginMaxFailures: parsed.LOGIN_MAX_FAILURES,
-    loginLockoutMinutes: parsed.LOGIN_LOCKOUT_MINUTES,
+    rateLimitEnabled: isTruthy(parsed.RATE_LIMIT_ENABLED),
     webDistDir: parsed.WEB_DIST_DIR ? resolve(parsed.WEB_DIST_DIR) : resolve(REPO_ROOT, 'apps/web/dist'),
-    instanceDir: parsed.INSTANCE_DIR ? resolve(parsed.INSTANCE_DIR) : resolve(API_ROOT, 'instance'),
-    demoMode: false,
+    dataDir,
+    settingsEnv: collectSettingsEnv(source),
+    storageLocalDir: parsed.STORAGE_LOCAL_DIR ? resolve(parsed.STORAGE_LOCAL_DIR) : resolve(dataDir, 'uploads', 'files'),
+    mailDriver: resolveMailDriver(parsed.MAIL_DRIVER),
+    settingsAllowPrivateNetwork:
+      parsed.SETTINGS_ALLOW_PRIVATE_NETWORK.trim() === '' ? env !== 'production' : isTruthy(parsed.SETTINGS_ALLOW_PRIVATE_NETWORK),
+    demoMode: isTruthy(parsed.DEMO_MODE),
     demoResetHours: Math.max(1, parsed.DEMO_RESET_HOURS),
     demoAiHourlyPerIp: Math.max(0, parsed.DEMO_AI_HOURLY_PER_IP),
     demoAiDaily: Math.max(0, parsed.DEMO_AI_DAILY),
@@ -207,10 +254,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     taskSchedulerIntervalSeconds: parsed.TASK_SCHEDULER_INTERVAL_SECONDS,
     taskSchedulerLeaseSeconds: parsed.TASK_SCHEDULER_LEASE_SECONDS,
     runSchedulerInWeb: isTruthy(parsed.RUN_SCHEDULER_IN_WEB),
-    aiApiBase: parsed.AI_API_BASE,
-    aiApiKey: parsed.AI_API_KEY,
-    aiModel: parsed.AI_MODEL,
-    aiSqlDatabaseUrl: parsed.AI_SQL_DATABASE_URL || databaseUrl,
+    aiSqlDatabaseUrl: resolveAiSqlUrl(parsed.AI_SQL_DATABASE_URL, env, databaseUrl, parsed.POSTGRES_RO_PASSWORD.trim()),
     aiSqlStatementTimeoutMs: parsed.AI_SQL_STATEMENT_TIMEOUT_MS,
     postgresRoPassword: parsed.POSTGRES_RO_PASSWORD.trim(),
     apifoxProjectId: parsed.APIFOX_PROJECT_ID,

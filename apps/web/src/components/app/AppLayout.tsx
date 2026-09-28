@@ -1,0 +1,217 @@
+import { Activity, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation, useOutlet } from 'react-router-dom'
+import { motion } from 'motion/react'
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { useAuth } from '@/context/AuthContext'
+import { useTheme } from '@/context/ThemeContext'
+import { contentContainerClass } from '@/lib/appearance'
+import { pageTransition } from '@/lib/motion'
+import { isLightPage, prefetchPage } from '@/lib/page-modules'
+import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/shared/hooks/useIsMobile'
+import AppSidebar from '@/components/app/AppSidebar'
+import { PageLoading } from '@/components/app/StatusPages'
+import CommandMenu from '@/components/app/CommandMenu'
+import TagsView from '@/components/app/TagsView'
+import TopBar from '@/components/app/TopBar'
+import { TagsViewProvider, useTagsView } from '@/context/TagsViewContext'
+import { findActiveMenu, flattenMenus, sectionOf, type FlatMenu } from '@/components/app/menu-tree'
+import { useAppInfo } from '@/shared/hooks/useAppInfo'
+import { usePageTrail } from '@/components/app/usePageTrail'
+import { useDocumentTitle } from '@/lib/document-title'
+import { useTranslation } from 'react-i18next'
+
+// Loaded only when the assistant is on (it pulls in the markdown renderer)
+const AssistantWidget = lazy(() => import('@/components/app/assistant/AssistantWidget'))
+
+/**
+ * Page area. With the tags view on, every open tab's page stays mounted inside <Activity>:
+ * hidden tabs keep their state (filters, pagination, form input) and switching back is instant.
+ * Closing a tab drops its page; refreshing a tab remounts it (key includes the tab's version).
+ * Scroll position is remembered per page.
+ */
+interface PageAreaProps {
+  /** Keep every open tab's page mounted (tags view on, desktop) */
+  keepAlive: boolean
+  /** Class of the content container (content width) */
+  container: string
+}
+
+function PageArea({ keepAlive, container }: PageAreaProps) {
+  const outlet = useOutlet()
+  const location = useLocation()
+  const { tabs, versions } = useTagsView()
+  const current = location.pathname
+  const cacheable = keepAlive && tabs.some((t) => t.path === current)
+
+  // Cached route elements by pathname (updated during render: add the current page, drop closed tabs)
+  const [pages, setPages] = useState(() => new Map<string, ReactNode>())
+  if (cacheable && !pages.has(current)) setPages((prev) => new Map(prev).set(current, outlet))
+  const openPaths = new Set(keepAlive ? tabs.map((t) => t.path) : [])
+  if ([...pages.keys()].some((path) => !openPaths.has(path))) {
+    setPages((prev) => new Map([...prev].filter(([path]) => openPaths.has(path))))
+  }
+
+  const scrollRef = useRef<HTMLElement>(null)
+  const scrollTops = useRef(new Map<string, number>())
+  const version = versions[current] ?? 0
+  const scrollVersions = useRef(new Map<string, number>())
+  useLayoutEffect(() => {
+    // A refreshed page (new version) starts from the top again
+    if (scrollVersions.current.get(current) !== version) {
+      scrollVersions.current.set(current, version)
+      scrollTops.current.delete(current)
+    }
+    if (scrollRef.current) scrollRef.current.scrollTop = cacheable ? (scrollTops.current.get(current) ?? 0) : 0
+  }, [current, cacheable, version])
+
+  // Client-side navigation neither moves focus nor announces anything: move focus to <main> so the next Tab
+  // starts in the new page and screen readers read it (not on first load, which keeps the browser's own start)
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    scrollRef.current?.focus({ preventScroll: true })
+  }, [current])
+
+  // Full-height pages (AI chat, prompt studio) size themselves from --page-area-height: the scroll area's real height,
+  // which already leaves out the top bar and the tags view
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const update = () => el.style.setProperty('--page-area-height', `${el.clientHeight}px`)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const animated = (key: string, children: ReactNode) => (
+    <motion.div
+      key={key}
+      initial={pageTransition.initial}
+      animate={pageTransition.animate}
+      transition={pageTransition.transition}
+      className={container}
+    >
+      {children}
+    </motion.div>
+  )
+
+  return (
+    <main
+      id="main"
+      ref={scrollRef}
+      tabIndex={-1}
+      className="flex-1 overflow-y-auto focus:outline-none"
+      onScroll={(e) => scrollTops.current.set(current, e.currentTarget.scrollTop)}
+    >
+      <Suspense
+        fallback={
+          <div className={container}>
+            <PageLoading />
+          </div>
+        }
+      >
+        {cacheable
+          ? [...pages].map(([path, element]) => {
+              const key = `${path}#${versions[path] ?? 0}`
+              return (
+                <Activity key={key} mode={path === current ? 'visible' : 'hidden'}>
+                  {animated(key, element)}
+                </Activity>
+              )
+            })
+          : animated(`${current}#${versions[current] ?? 0}`, outlet)}
+      </Suspense>
+    </main>
+  )
+}
+
+/**
+ * While the browser is idle, fetch the code of the light pages in the menu (system pages, the gallery's admin pages),
+ * one at a time, so opening them for the first time doesn't wait for a download. Skipped when the user asked to save data.
+ */
+function usePrefetchLightPages(flat: FlatMenu[]) {
+  useEffect(() => {
+    // navigator.connection (Network Information API) is not in lib.dom: Chromium only
+    if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return undefined
+    const queue = flat.map((m) => m.component).filter(isLightPage)
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1500))
+    const cancelIdle = window.cancelIdleCallback ?? window.clearTimeout
+    let handle: number | undefined
+    let stopped = false
+    const next = () => {
+      if (stopped || queue.length === 0) return
+      handle = idle(() => prefetchPage(queue.shift()).finally(next))
+    }
+    next()
+    return () => {
+      stopped = true
+      // Nothing was scheduled when the queue was empty from the start
+      if (handle !== undefined) cancelIdle(handle)
+    }
+  }, [flat])
+}
+
+/**
+ * App shell: sidebar + top bar (+ tags view) + content area.
+ * Layout follows the appearance settings: nav mode (sidebar / top / mixed), sidebar variant, content width, tags view.
+ * On mobile every nav mode falls back to the full menu in the sidebar sheet, and the tags view is hidden.
+ */
+function Shell() {
+  const { t } = useTranslation()
+  const location = useLocation()
+  const { menus } = useAuth()
+  const { navMode, sidebarVariant, contentWidth, tagsView } = useTheme()
+  const isMobile = useIsMobile()
+  const [searchOpen, setSearchOpen] = useState(false)
+  const assistant = useAppInfo()?.assistant
+
+  const flat = useMemo(() => flattenMenus(menus), [menus])
+  usePrefetchLightPages(flat)
+  const section = useMemo(() => sectionOf(findActiveMenu(flat, location.pathname)), [flat, location.pathname])
+  const showSidebar = isMobile || navMode !== 'top'
+  const trail = usePageTrail()
+  useDocumentTitle(trail.at(-1)?.name)
+
+  return (
+    <SidebarProvider className="h-svh">
+      {/* First focusable element: jumps past the sidebar and top bar */}
+      <a
+        href="#main"
+        onClick={(e) => {
+          e.preventDefault()
+          document.getElementById('main')?.focus()
+        }}
+        className="bg-background text-foreground focus-visible:outline-ring sr-only z-50 rounded-md text-sm font-medium shadow-md focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:px-3 focus:py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+      >
+        {t('跳到主内容')}
+      </a>
+      {showSidebar ? (
+        <AppSidebar variant={sidebarVariant} section={!isMobile && navMode === 'mixed' ? section : undefined} />
+      ) : null}
+      <SidebarInset className={cn('min-w-0 overflow-hidden', !showSidebar && 'md:m-0 md:rounded-none md:shadow-none')}>
+        <TopBar onOpenSearch={() => setSearchOpen(true)} />
+        {tagsView ? <TagsView /> : null}
+        <PageArea keepAlive={tagsView && !isMobile} container={contentContainerClass(contentWidth)} />
+      </SidebarInset>
+      <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
+      {assistant ? (
+        <Suspense fallback={null}>
+          <AssistantWidget />
+        </Suspense>
+      ) : null}
+    </SidebarProvider>
+  )
+}
+
+export default function AppLayout() {
+  return (
+    <TagsViewProvider>
+      <Shell />
+    </TagsViewProvider>
+  )
+}

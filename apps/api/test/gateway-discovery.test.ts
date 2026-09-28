@@ -28,7 +28,7 @@ afterAll(async () => {
   await transport.close()
   await server.close()
 })
-test('model discovery falls back to v1 and normalizes legacy lists', async () => {
+test('model discovery falls back to v1 and normalizes alternate lists', async () => {
   expect(
     await discoverModels(transport, base, 'fixture', AbortSignal.timeout(1000)),
   ).toEqual({ models: ['a', 'b'], model_discovery_supported: true })

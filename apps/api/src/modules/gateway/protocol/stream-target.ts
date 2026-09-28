@@ -6,7 +6,7 @@ import {
   truthy,
   get,
   text,
-  pythonJson,
+  wireJson,
 } from './compat-helpers'
 import { sse } from './stream-source'
 import { responseEnvelope, outputText } from './responses-helpers'
@@ -193,7 +193,7 @@ export class OpenAIToAnthropicStream implements TargetStream {
               partial_json:
                 typeof fn.arguments === 'string'
                   ? fn.arguments
-                  : pythonJson(fn.arguments),
+                  : wireJson(fn.arguments),
             },
           }),
         )
@@ -564,7 +564,7 @@ export class OpenAIToResponsesStream implements TargetStream {
         const args =
           typeof fn.arguments === 'string'
             ? fn.arguments
-            : pythonJson(fn.arguments)
+            : wireJson(fn.arguments)
         item.arguments = String(item.arguments) + args
         out.push(
           this.event('response.function_call_arguments.delta', {

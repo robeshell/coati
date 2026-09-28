@@ -1,4 +1,4 @@
-/** Python attaches ZoneInfo with fold=0 to naive local buckets. Prefer the
+/** Gateway attaches ZoneInfo with fold=0 to naive local buckets. Prefer the
  * earlier instant at an overlap, and the pre-transition offset in a gap. */
 export function usageBucketIso(local: string, timezone: string) {
   const naive = Date.parse(local + 'Z')

@@ -25,3 +25,8 @@ export * from './component-center/advanced-table'
 export * from './component-center/ai-prompt'
 
 export * from './gateway'
+
+export * from './admin/files'
+export * from './admin/security'
+export * from './admin/open-api'
+export * from './component-center/demo-record'

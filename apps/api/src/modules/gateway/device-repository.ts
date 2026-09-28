@@ -40,7 +40,7 @@ export class DeviceRepository {
     policy: DeviceStartPolicy = deviceStartPolicy(),
   ) {
     return this.db.transaction(async (tx) => {
-      // Database-wide admission, matching the Python gateway's lock namespace.
+      // Database-wide admission, matching the Gateway gateway's lock namespace.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(73462109)`)
       await tx
         .delete(gw_devices)

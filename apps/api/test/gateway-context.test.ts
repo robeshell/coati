@@ -33,7 +33,7 @@ test('context counts UTF-8 bytes, nested images and tool results without storing
   expect(JSON.stringify(result)).not.toContain('private')
   expect(JSON.stringify(result)).not.toContain('秘密')
 })
-test('trace precedence, normalization and bounded indices match legacy headers', () => {
+test('trace precedence, normalization and bounded indices match alternate headers', () => {
   const result = requestContext(
     { session_id: 'body' },
     {

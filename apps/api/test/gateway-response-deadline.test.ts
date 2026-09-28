@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import {
   createServer,
   request,
@@ -59,9 +60,9 @@ test('finished or disconnected responses cancel timers and remove listeners', ()
   vi.useFakeTimers()
   try {
     for (const event of ['finish', 'close']) {
-      const raw = new (require('node:events').EventEmitter)()
-      raw.destroy = vi.fn()
-      boundResponseLifetime(raw, 100)
+      const raw = Object.assign(new EventEmitter(), { destroy: vi.fn() })
+      // This fixture implements only the response events and destroy used by the deadline guard.
+      boundResponseLifetime(raw as unknown as import('node:http').ServerResponse, 100)
       expect(vi.getTimerCount()).toBe(1)
       raw.emit(event)
       expect(vi.getTimerCount()).toBe(0)

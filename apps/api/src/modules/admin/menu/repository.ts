@@ -53,12 +53,9 @@ export class MenuRepository {
     return this.db.select().from(menus).where(this.searchWhere(search)).orderBy(asc(menus.sort_order), asc(menus.id))
   }
 
-  /**
-   * Direct children of a menu: ordered by sort_order only (ties are ordered by the PG query plan),
-   * so we run a fixed-shape query per node to keep the existing order, instead of loading the whole table and sorting in memory.
-   */
-  async listChildrenPyOrder(parentId: number): Promise<Menu[]> {
-    return this.db.select().from(menus).where(eq(menus.parent_id, parentId)).orderBy(asc(menus.sort_order))
+  /** Direct children of a menu, ordered by (sort_order, id) */
+  async listChildren(parentId: number): Promise<Menu[]> {
+    return this.db.select().from(menus).where(eq(menus.parent_id, parentId)).orderBy(asc(menus.sort_order), asc(menus.id))
   }
 
   /** Sibling menus (parent_id IS NULL or = parentId), sort_order ASC, id ASC */
@@ -100,7 +97,7 @@ export class MenuRepository {
     return this.listFlat(search)
   }
 
-  /** `sync_id_sequence`: after inserts with explicit ids, advance the sequence to MAX(id)+1 */
+  /** After inserts with explicit ids (the RBAC seed), advance the id sequence to MAX(id)+1 */
   async syncIdSequence(): Promise<void> {
     await this.db.execute(sql`
       SELECT setval(
@@ -116,7 +113,7 @@ export class MenuRepository {
     return row!
   }
 
-  /** Update and refresh updated_at (matches onupdate=datetime.utcnow; callers only call this when something actually changed) */
+  /** Update and refresh updated_at (callers only call this when something actually changed) */
   async update(id: number, values: MenuUpdateValues): Promise<Menu> {
     const [row] = await this.db.update(menus).set(values).where(eq(menus.id, id)).returning()
     return row!

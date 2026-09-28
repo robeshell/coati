@@ -30,7 +30,7 @@ async function call(k:any,model:string,protocol:string,stream:boolean,prompt:str
  const response=await fetch(`http://localhost:5004/v1/${endpoint}`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${k.token}`,'x-coati-reasoning-policy':'text-only'},body:JSON.stringify(body),signal:AbortSignal.timeout(65000)})
  const text=await response.text();let json:any
  const events=stream?text.split('\n').filter(l=>l.startsWith('data: ')&&l!=='data: [DONE]').flatMap(l=>{try{return[JSON.parse(l.slice(6))]}catch{return[]}}):[]
- if(!stream||!response.ok){try{json=JSON.parse(text)}catch{}}
+ if(!stream||!response.ok){try{json=JSON.parse(text)}catch{ /* Optional diagnostic data may be unavailable. */ }}
  const failure=events.find(e=>e.type==='error'||e.error||e.type==='response.failed'||e.type==='response.incomplete')
  const terminal=!stream||(protocol==='openai'?text.includes('data: [DONE]'):events.some(e=>e.type===(protocol==='responses'?'response.completed':'message_stop')))
  const content=stream?events.map(e=>e.choices?.[0]?.delta?.content||e.delta?.text||(e.type==='response.output_text.delta'?e.delta:'')||'').join(''):json?.choices?.[0]?.message?.content||json?.content?.filter((b:any)=>b.type==='text').map((b:any)=>b.text).join('')||json?.output?.flatMap((i:any)=>i.content||[]).map((c:any)=>c.text||'').join('')||''
@@ -84,7 +84,7 @@ try{
   }
   failed=batchResults.some(r=>!r.ok)?failed+1:0
   const rows=(await handle.db.execute(sql`select count(*)::int as requests,count(*) filter(where status='reserved')::int as active,sum(input_tokens)::bigint as input,sum(output_tokens)::bigint as output,sum(cache_read_tokens)::bigint as cache from gw_requests where key_id=${k.id}`)).rows
-  let rss='unavailable';try{const pid=execFileSync('lsof',['-tiTCP:5004','-sTCP:LISTEN'],{encoding:'utf8'}).trim().split('\n')[0]!;rss=execFileSync('ps',['-p',pid,'-o','rss='],{encoding:'utf8'}).trim()}catch{}
+  let rss='unavailable';try{const pid=execFileSync('lsof',['-tiTCP:5004','-sTCP:LISTEN'],{encoding:'utf8'}).trim().split('\n')[0]!;rss=execFileSync('ps',['-p',pid,'-o','rss='],{encoding:'utf8'}).trim()}catch{ /* Optional diagnostic data may be unavailable. */ }
   samples.push({time:Date.now(),rss_kb:rss,...rows[0]});batch++;save()
   console.log(JSON.stringify({dir,stage,elapsed_s:Math.round((Date.now()-started)/1000),batch,ok:batchResults.every(r=>r.ok)}))
   if(failed>=3)throw Error('Three consecutive failed batches; stopped')

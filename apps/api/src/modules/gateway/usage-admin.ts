@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import type { GatewayRepository } from './repository'
-import { legacyUsageFilters, legacyUsageItem } from './legacy-pat'
+import { usageFilters, usageItem } from './personal-access'
 export async function listAdminUsage(repo: GatewayRepository, query: unknown) {
-  const filters = legacyUsageFilters(query)
+  const filters = usageFilters(query)
   const { user_id } = z
     .object({
       user_id: z.preprocess(
@@ -11,14 +11,14 @@ export async function listAdminUsage(repo: GatewayRepository, query: unknown) {
       ),
     })
     .parse(query)
-  const result = await repo.legacyUsagePage(
+  const result = await repo.usagePage(
     { kind: 'admin', owner: user_id },
     filters,
     filters.pat_id,
   )
   return {
     items: result.rows.map((item) => ({
-      ...legacyUsageItem(item),
+      ...usageItem(item),
       user_id: item.user_id,
       username: item.username,
       pat_id: item.row.key_id,

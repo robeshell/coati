@@ -15,7 +15,7 @@ export type SearchSource = {
   snippet?: string
   publishedAt?: string
 }
-/** Legacy filters accept a host plus optional path; path matching is segment-bound. */
+/** Domain filters accept a host plus optional path; path matching is segment-bound. */
 export const domainFilter = z.string().trim().min(1).max(2048).transform((raw, ctx) => {
   try {
     const value = raw.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/^\*\./, '')
@@ -88,7 +88,7 @@ export interface SearchProviderOptions {
   /** Deployment-owned endpoint override for isolated tests/self-hosted compatible services. Never a request field. */
   baseUrl?: string
 }
-/** Python Tavily contract. Fetch targets are payloads sent to the provider, never gateway destinations. */
+/** Gateway Tavily contract. Fetch targets are payloads sent to the provider, never gateway destinations. */
 export class TavilySearchProvider {
   private readonly base: string
   private readonly timeout: number

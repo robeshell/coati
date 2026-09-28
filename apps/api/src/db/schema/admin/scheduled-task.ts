@@ -30,9 +30,9 @@ export const scheduled_tasks = pgTable('scheduled_tasks', {
   created_at: createdAt(),
   updated_at: updatedAt(),
 }, (table) => [
-  index('ix_scheduled_tasks_is_active').using('btree', table.is_active),
-  index('ix_scheduled_tasks_next_run_at').using('btree', table.next_run_at),
-  unique('scheduled_tasks_task_code_key').on(table.task_code),
+  index('scheduled_tasks_is_active_idx').using('btree', table.is_active),
+  index('scheduled_tasks_next_run_at_idx').using('btree', table.next_run_at),
+  unique('scheduled_tasks_task_code_unique').on(table.task_code),
 ])
 
 export const scheduled_task_runs = pgTable('scheduled_task_runs', {
@@ -43,18 +43,18 @@ export const scheduled_task_runs = pgTable('scheduled_task_runs', {
   response_status: integer(),
   response_body: text(),
   error_message: text(),
-  /** `default=datetime.utcnow` */
+  /** Current UTC time on insert */
   started_at: createdAt(),
   finished_at: timestamp({ mode: 'string' }),
   duration_ms: integer(),
   created_at: createdAt(),
 }, (table) => [
-  index('ix_scheduled_task_runs_status').using('btree', table.status),
-  index('ix_scheduled_task_runs_task_id').using('btree', table.task_id),
+  index('scheduled_task_runs_status_idx').using('btree', table.status),
+  index('scheduled_task_runs_task_id_idx').using('btree', table.task_id),
   foreignKey({
       columns: [table.task_id],
       foreignColumns: [scheduled_tasks.id],
-      name: 'scheduled_task_runs_task_id_fkey'
+      name: 'scheduled_task_runs_task_id_fk'
     }).onDelete('cascade'),
 ])
 

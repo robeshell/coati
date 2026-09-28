@@ -2,8 +2,8 @@
 
 The project icon depicts a coati. It was generated with the built-in OpenAI image generation tool, then resized with macOS `sips`, preserving transparency.
 
-- Main icon: `portal/frontend/public/logo.png` (512 × 512)
-- Browser icon: `portal/frontend/public/favicon.png` (64 × 64)
+- Main icon: `apps/web/public/logo.png` (512 × 512)
+- Browser icon: `apps/web/public/favicon.png` (64 × 64)
 
 ## Generation prompt
 

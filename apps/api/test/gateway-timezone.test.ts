@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { gatewayTimezone } from '../src/modules/gateway/timezone'
-test('business timezone matches legacy fallback and supports explicit UTC', () => {
+test('business timezone matches alternate fallback and supports explicit UTC', () => {
   expect(gatewayTimezone('')).toBe('Asia/Shanghai')
   expect(gatewayTimezone('not-a-zone')).toBe('Asia/Shanghai')
   expect(gatewayTimezone('+08:00')).toBe('Asia/Shanghai')

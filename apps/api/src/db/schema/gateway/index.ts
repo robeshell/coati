@@ -107,8 +107,8 @@ export const gw_public_routes = pgTable('gw_public_routes', {
   enabled: boolean().notNull().default(true),
   created_at: at(),
 })
-// Immutable source snapshots retain legacy IDs for rollback and historical lookup.
-export const gw_route_migrations = pgTable('gw_route_migrations', {
+// Immutable source snapshots retain alternate IDs for rollback and historical lookup.
+export const gw_route_operations = pgTable('gw_route_operations', {
   id: uuid().primaryKey().defaultRandom(),
   model: text().notNull(),
   version: text().notNull(),
@@ -337,7 +337,7 @@ export const gw_search_settings = pgTable('gw_search_settings', {
   updated_at: at(),
 }, t => [check('gw_search_settings_singleton',sql`${t.id}=1`)])
 
-export const gw_legacy_imports = pgTable('gw_legacy_imports', {
+export const gw_import_receipts = pgTable('gw_import_receipts', {
   checksum: text().primaryKey(),
   counts: jsonb().$type<Record<string, number>>().notNull(),
   id_map: jsonb().$type<Record<string, unknown>>().notNull(),

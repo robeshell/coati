@@ -15,7 +15,7 @@ import type { GatewayService } from './service'
 import type { UpstreamRow } from './repository'
 import { validateBase } from './transport'
 
-const inputSchema = upstreamSchema
+export const inputSchema = upstreamSchema
   .extend({
     model_prefix: z
       .string()
@@ -58,16 +58,16 @@ export function personalChannelRecord(row: UpstreamRow) {
     owner_user_id: row.owner_user_id,
     health_status: row.health_status,
     last_probe_at: row.last_probe_at
-      ? utcNowIso(new Date(row.last_probe_at)) + 'Z'
+      ? utcNowIso(new Date(row.last_probe_at))
       : null,
     last_probe_status: row.last_probe_status,
     last_probe_latency_ms: row.last_probe_latency_ms,
     consecutive_failures: row.consecutive_failures,
     last_error: row.last_error,
     cooldown_until: row.cooldown_until
-      ? utcNowIso(new Date(row.cooldown_until)) + 'Z'
+      ? utcNowIso(new Date(row.cooldown_until))
       : null,
-    created_at: utcNowIso(new Date(row.created_at)) + 'Z',
+    created_at: utcNowIso(new Date(row.created_at)),
   }
 }
 export async function savePersonalChannel(
@@ -181,7 +181,7 @@ export async function listPersonalChannels(
   }
 }
 
-const discoverySchema = z
+export const discoverySchema = z
   .object({
     request_timeout_seconds: upstreamSchema.shape.request_timeout_seconds,
     proxy_url: upstreamSchema.shape.proxy_url,

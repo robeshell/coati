@@ -56,7 +56,7 @@ test('batch database failure is logged and the next timer retries', async () => 
   await runner.stop()
 })
 
-test('legacy probe settings are bounded and an explicit Node switch takes precedence', () => {
+test('alternate probe settings are bounded and an explicit Node switch takes precedence', () => {
   expect(probePolicy({})).toEqual({ enabled: false, intervalSeconds: 300, batchLimit: 5, quietSeconds: 600 })
   expect(probePolicy({ AGENT_CREDENTIAL_PROBE_ENABLED: 'yes', AGENT_CREDENTIAL_PROBE_INTERVAL_SECONDS: '10', AGENT_CREDENTIAL_PROBE_BATCH_LIMIT: '2', AGENT_CREDENTIAL_PROBE_QUIET_SECONDS: '90' })).toEqual({ enabled: true, intervalSeconds: 30, batchLimit: 2, quietSeconds: 90 })
   expect(probePolicy({ GATEWAY_ENABLE_PROBES: 'false', AGENT_CREDENTIAL_PROBE_ENABLED: 'true' }).enabled).toBe(false)

@@ -8,14 +8,14 @@ export const truthy = (v: unknown): boolean =>
   (!Array.isArray(v) || v.length > 0) &&
   (!isObject(v) || Object.keys(v).length > 0)
 export const fallback = (v: unknown, other: unknown) => (truthy(v) ? v : other)
-// Python json.dumps uses spaces after separators. Tool argument strings are observable wire values.
-export function pythonJson(value: unknown): string {
-  if (Array.isArray(value)) return '[' + value.map(pythonJson).join(', ') + ']'
+// Gateway json.dumps uses spaces after separators. Tool argument strings are observable wire values.
+export function wireJson(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(wireJson).join(', ') + ']'
   if (isObject(value))
     return (
       '{' +
       Object.entries(value)
-        .map(([k, v]) => JSON.stringify(k) + ': ' + pythonJson(v))
+        .map(([k, v]) => JSON.stringify(k) + ': ' + wireJson(v))
         .join(', ') +
       '}'
     )

@@ -17,7 +17,7 @@ for (const body of [
     ],
   },
 ])
-  test(`Python image detection: ${JSON.stringify(body)}`, () =>
+  test(`Gateway image detection: ${JSON.stringify(body)}`, () =>
     expect(hasImage(body)).toBe(true))
 for (const body of [
   {},

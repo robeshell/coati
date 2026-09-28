@@ -1,69 +1,118 @@
 /**
  * Users module routes
  *
- * Mind the order: routes with an id run get_or_404 first, then the permission check (preserves existing API behavior).
+ * Routes with an id check permissions first (403), then load the record (404), so a caller without permission can't tell whether an id exists.
+ * Data scope: every read and write goes through the caller's scope; a user outside it is a 404, like a missing one.
  */
 
-import type { FastifyInstance } from 'fastify'
-import { hasMenuPermission, loginRequired } from '@/common/auth'
-import { getUploadedFile, intParam, jsonBody, parseIntParam, queryString } from '@/common/http'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { currentUsername, getCurrentAdminUser, hasMenuPermission, loginRequired } from '@/common/auth'
+import { isSuperAdmin } from '@/common/rbac'
+import { resolveDataScope } from '@/common/data-scope'
+import { getUploadedFile, intParam, parseIntParam, queryString } from '@/common/http'
+import { routeBody } from '@/common/validation'
 import { parsePagination } from '@/common/pagination'
 import { sendTable } from '@/common/tabular'
-import { UserService } from './service'
+import { isUserStatus, profileBody, userBody, userExportBody, userStatusBody, userUpdateBody } from './schema'
+import { declareEvents } from '@/common/webhooks'
+import { UserService, type Caller } from './service'
+
+declareEvents({ 'user.created': '用户已新增', 'user.updated': '用户已修改（含资料、状态、角色）', 'user.deleted': '用户已删除' })
 
 export async function registerUserRoutes(app: FastifyInstance): Promise<void> {
-  const service = new UserService(app.db)
+  const service = new UserService(app.db, app.settings, app.events)
   const opts = { preHandler: loginRequired }
+  const callerOf = async (request: FastifyRequest): Promise<Caller> => {
+    const current = await getCurrentAdminUser(request)
+    return { username: current?.username, superAdmin: Boolean(current && isSuperAdmin(current)) }
+  }
+  const scopedUserOr404 = async (request: FastifyRequest) =>
+    service.getUserOr404(parseIntParam((request.params as { user_id: string }).user_id), await resolveDataScope(request))
 
   app.get('/api/admin/users', opts, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_users'))) {
       return reply.status(403).send({ error: '无权限查看用户列表' })
     }
     const { page, per_page } = parsePagination(request.query as Record<string, unknown>)
-    return service.listUsers(page, per_page, queryString(request, 'search').trim())
+    const status = queryString(request, 'status').trim()
+    const deptId = queryString(request, 'dept_id').trim()
+    return service.listUsers(
+      page,
+      per_page,
+      {
+        search: queryString(request, 'search').trim(),
+        status: isUserStatus(status) ? status : '',
+        deptId: /^\d+$/.test(deptId) ? Number(deptId) : null,
+      },
+      await resolveDataScope(request),
+    )
   })
 
-  app.post('/api/admin/users', opts, async (request, reply) => {
+  const userInput = routeBody(userBody, 'create')
+  app.post('/api/admin/users', { ...opts, ...userInput.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_users_add'))) {
-      return reply.status(403).send({ error: '无权限新增用户' })
+      return reply.status(403).send({ error: '无权限新建用户' })
     }
-    return reply.status(201).send(await service.createUser(jsonBody(request)))
+    return reply.status(201).send(await service.createUser(userInput.parse(request), await resolveDataScope(request), await callerOf(request)))
   })
 
-  app.put(`/api/admin/users/${intParam('user_id')}`, opts, async (request, reply) => {
-    const user = await service.getUserOr404(parseIntParam((request.params as { user_id: string }).user_id))
+  const userPatch = routeBody(userUpdateBody, 'patch')
+  app.put(`/api/admin/users/${intParam('user_id')}`, { ...opts, ...userPatch.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_users_edit'))) {
       return reply.status(403).send({ error: '无权限编辑用户' })
     }
-    return service.updateUser(user, jsonBody(request))
+    const user = await scopedUserOr404(request)
+    return service.updateUser(user, userPatch.parse(request), await resolveDataScope(request), await callerOf(request))
+  })
+
+  const userStatusInput = routeBody(userStatusBody, 'create')
+  app.put(`/api/admin/users/${intParam('user_id')}/status`, { ...opts, ...userStatusInput.route }, async (request, reply) => {
+    if (!(await hasMenuPermission(request, 'system_users_status'))) {
+      return reply.status(403).send({ error: '无权限启用或停用用户' })
+    }
+    const user = await scopedUserOr404(request)
+    return service.setUserStatus(user, userStatusInput.parse(request).status, await callerOf(request))
   })
 
   app.delete(`/api/admin/users/${intParam('user_id')}`, opts, async (request, reply) => {
-    const user = await service.getUserOr404(parseIntParam((request.params as { user_id: string }).user_id))
     if (!(await hasMenuPermission(request, 'system_users_delete'))) {
       return reply.status(403).send({ error: '无权限删除用户' })
     }
-    return service.deleteUser(user, request.session.get('username'))
+    const user = await scopedUserOr404(request)
+    return service.deleteUser(user, await callerOf(request))
   })
 
-  app.post('/api/admin/users/export', opts, async (request, reply) => {
-    if (!(await hasMenuPermission(request, 'system_users'))) {
+  const userExportInput = routeBody(userExportBody, 'create')
+  app.post('/api/admin/users/export', { ...opts, ...userExportInput.route }, async (request, reply) => {
+    if (!(await hasMenuPermission(request, 'system_users_export'))) {
       return reply.status(403).send({ error: '无权限导出用户' })
     }
-    return sendTable(reply, await service.exportUsers(jsonBody(request)))
+    return sendTable(reply, await service.exportUsers(userExportInput.parse(request), await resolveDataScope(request)))
   })
 
   app.get('/api/admin/users/template', opts, async (request, reply) => {
-    if (!(await hasMenuPermission(request, 'system_users'))) {
+    if (!(await hasMenuPermission(request, 'system_users_import'))) {
       return reply.status(403).send({ error: '无权限下载用户导入模板' })
     }
     return sendTable(reply, await service.downloadTemplate(queryString(request, 'file_type', '') || null))
   })
 
+  // Self-service profile: any signed-in user, own nickname / email / phone / avatar only
+  const profilePatch = routeBody(profileBody, 'patch')
+  app.put('/api/admin/profile', { ...opts, ...profilePatch.route }, async (request) => {
+    const user = await getCurrentAdminUser(request)
+    return service.updateOwnProfile(user!, profilePatch.parse(request))
+  })
+
   app.post('/api/admin/users/import', opts, async (request, reply) => {
-    if (!(await hasMenuPermission(request, 'system_users_edit'))) {
+    if (!(await hasMenuPermission(request, 'system_users_import'))) {
       return reply.status(403).send({ error: '无权限导入用户' })
     }
-    return service.importUsers(await getUploadedFile(request))
+    return service.importUsers(await getUploadedFile(request), {
+      currentUsername: await currentUsername(request),
+      superAdmin: (await callerOf(request)).superAdmin,
+      canSetStatus: await hasMenuPermission(request, 'system_users_status'),
+      scope: await resolveDataScope(request),
+    })
   })
 }

@@ -2,8 +2,8 @@ import { array, object, type Obj } from './protocol/compat-helpers'
 const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null
 const sum = (rows: Obj[], field: string) => rows.reduce((total,row)=>total+(number(row[field])??0),0)
 const ratio = (a: number, b: number) => b > 0 ? Math.round(a/b*10000)/10000 : null
-/** Legacy response aliases, without changing the native record or fabricating unknown cache counters. */
-export function legacyCacheTest(raw: unknown) {
+/** Additional response fields, without changing the native record or fabricating unknown cache counters. */
+export function cacheTestView(raw: unknown) {
   const row=object(raw), summary=object(row.summary)
   const rounds=array(row.results).map(value=>{
     const round=object(value), read=number(round.cache_read_tokens), miss=number(round.cache_miss_tokens), write=number(round.cache_write_tokens)

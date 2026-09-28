@@ -7,7 +7,7 @@ export class CacheTestRepository {
   async page(
     owner: number,
     q: { page: number; per_page: number; search?: string },
-    legacyDetails = false,
+    includeDetails = false,
   ) {
     await this.recoverInterrupted()
     const where = and(
@@ -24,7 +24,7 @@ export class CacheTestRepository {
         // Do not include long prompts or per-round payloads in list responses.
         const items = await tx
           .select({
-            ...(legacyDetails ? { results: gw_cache_tests.results, user_id: gw_cache_tests.user_id } : {}),
+            ...(includeDetails ? { results: gw_cache_tests.results, user_id: gw_cache_tests.user_id } : {}),
             id: gw_cache_tests.id,
             name: gw_cache_tests.name,
             model: gw_cache_tests.model,

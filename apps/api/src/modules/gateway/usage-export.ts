@@ -4,7 +4,7 @@ import {
   sanitizeFormula,
   type TablePayload,
 } from '@/common/tabular'
-import { LegacyPatService } from './legacy-pat'
+import { PersonalAccessService } from './personal-access'
 
 const fields = {
   created_at: '时间',
@@ -56,7 +56,7 @@ const zeroFields = new Set([
   'largest_message_bytes',
 ])
 export async function exportPersonalUsage(
-  pats: LegacyPatService,
+  pats: PersonalAccessService,
   owner: number,
   body: unknown,
 ): Promise<TablePayload> {

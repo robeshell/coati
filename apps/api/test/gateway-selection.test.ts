@@ -9,7 +9,7 @@ const pool = [1, 2, 3].map((id, index) => ({
   route: { id, priority: 100 },
   upstream: { id, weight: [1, 3, 2][index]! },
 }))
-test('affinity ranking matches Python SHA256 exponential scoring and ignores enumeration order', () => {
+test('affinity ranking matches Gateway SHA256 exponential scoring and ignores enumeration order', () => {
   const rank = orderCandidates(pool, '7:session-a:model-a').map(
     (c) => c.upstream.id,
   )
@@ -98,7 +98,7 @@ test('personal load ties preserve weighted random ranking instead of preferring 
   expect(personalCandidates(equal, {1: 10, 2: 0, 3: 2}, () => 0.5).map(c => c.upstream.id)).toEqual([2, 3, 1])
 })
 
-test('Python health windows demote recent failures but retain an all-penalized fallback pool', () => {
+test('Gateway health windows demote recent failures but retain an all-penalized fallback pool', () => {
   const policy=schedulingPolicy({}), now=Date.parse('2030-01-01T00:10:00Z')
   const healthy={upstream:{health_status:'healthy',last_error_at:null}}
   const soft={upstream:{health_status:'healthy',last_error_at:new Date(now-9000).toISOString()}}
@@ -110,6 +110,6 @@ test('Python health windows demote recent failures but retain an all-penalized f
   expect(inHealthPenalty({health_status:'cooldown',last_error_at:new Date(now).toISOString()},policy,now)).toBe(false)
   expect(inHealthPenalty(soft.upstream,{...policy,softRetrySeconds:0},now)).toBe(false)
 })
-test('Python scheduling settings retain zero behavior and clamp the candidate window', () => {
+test('Gateway scheduling settings retain zero behavior and clamp the candidate window', () => {
   expect(schedulingPolicy({AGENT_GATEWAY_SELECTION_POOL_SIZE:'100',AGENT_CREDENTIAL_SOFT_RETRY_SECONDS:'0',AGENT_CREDENTIAL_UNHEALTHY_RETRY_SECONDS:'0',AGENT_CREDENTIAL_COOLDOWN_SECONDS:'0',AGENT_CREDENTIAL_FAILURE_THRESHOLD:'0'})).toEqual({selectionPoolSize:50,softRetrySeconds:0,unhealthyRetrySeconds:300,cooldownSeconds:60,failureThreshold:1})
 })

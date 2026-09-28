@@ -30,7 +30,7 @@ afterAll(async () => {
   await transport.close()
   await mock.close()
 })
-test('search emits the Python provider contract, deduplicates and enforces domain boundaries', async () => {
+test('search emits the Gateway provider contract, deduplicates and enforces domain boundaries', async () => {
   response = {
     results: [
       {

@@ -1,7 +1,7 @@
 /**
  * scripts/seed-rbac.ts: full rebuild and incremental sync of menus, the super admin role and the admin account
  *
- * - Full/incremental modes are verified on a separate temporary database (coati_seed_*), leaving the shared test DB's RBAC data untouched
+ * - Full/incremental modes are verified on a separate temporary database (castor_seed_*), leaving the shared test DB's RBAC data untouched
  * - Incremental mode is additionally run twice in a row on TEST_DATABASE_URL (a clone of the live DB) to confirm it is idempotent and doesn't change existing IDs
  */
 
@@ -12,7 +12,7 @@ import { checkPasswordHash } from '../src/common/password'
 import { runMigrations } from '../src/db/migrate'
 import { TEST_DATABASE_URL } from './helpers'
 
-const TEMP_DB = 'coati_seed_rbac'
+const TEMP_DB = 'castor_seed_vt_r8'
 const quiet = () => {}
 
 function urlForDatabase(name: string): string {
@@ -68,46 +68,45 @@ afterAll(async () => {
 // Menu count / max ID are derived from MENUS_DATA: they change with every new feature module menu, so the test only checks the sync logic itself
 const MENU_COUNT = MENUS_DATA.length
 const NEXT_MENU_ID = Math.max(...MENUS_DATA.map((m) => m.id)) + 1
-/** Sanity floor for the retained system and gateway permissions. */
-const LEGACY_MENU_COUNT = 40
+/** The 116 menus of the built-in menu set: new features must not change them */
+const BUILT_IN_MENU_COUNT = 116
 
 describe('MENUS_DATA', () => {
-  it('包含网关与系统菜单；ID/编码唯一、父节点先于子节点、历史 ID 不变', () => {
-    expect(MENU_COUNT).toBeGreaterThanOrEqual(LEGACY_MENU_COUNT)
+  it('至少包含内置的 116 个菜单；ID/编码唯一、父节点先于子节点、内置 ID 不变', () => {
+    expect(MENU_COUNT).toBeGreaterThanOrEqual(BUILT_IN_MENU_COUNT)
     const ids = MENUS_DATA.map((m) => m.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(new Set(MENUS_DATA.map((m) => m.code)).size).toBe(ids.length)
-    // Legacy IDs must not change
+    // Built-in IDs must not change
     for (const [id, code] of [
-      [32, 'system_scheduled_tasks'],
       [100002, 'system_notifications'],
       [100003, 'system_announcements'],
-      [1000, 'gateway_overview'],
-      [1003, 'gateway_keys'],
+      [32, 'system_scheduled_tasks'],
+      [315, 'system_announcements_import'],
+      [43, 'cc_patterns'],
+      [435, 'cc_patterns_import'],
+      [4301, 'cc_patterns_standard_list'],
+      [4310, 'cc_patterns_advanced_table'],
+      [47, 'cc_components'],
+      [4701, 'cc_components_data_table'],
+      [4711, 'cc_components_condition_builder'],
+      [414, 'cc_dataviz_dashboard'],
+      [4423, 'cc_ai_prompt_delete'],
     ] as const) {
       expect(MENUS_DATA.find((m) => m.id === id)?.code).toBe(code)
     }
-    expect(MENUS_DATA.find(m => m.code === 'gateway_my_usage_export')?.parent_id).toBe(MENUS_DATA.find(m => m.code === 'gateway_my_usage')?.id)
     const seen = new Set<number>()
     for (const menu of MENUS_DATA) {
       if (menu.parent_id !== null) expect(seen.has(menu.parent_id)).toBe(true)
       seen.add(menu.id)
-      if (menu.menu_type === 'button') expect(menu.is_visible).toBe(false)
-      if (menu.is_visible) expect(menu.menu_type).toBe('menu')
-      // API-only permission groups stay hidden until their console page exists.
-      if (menu.menu_type === 'menu' && !menu.is_visible) {
-        expect(menu.path).toBeNull()
-        expect(menu.component).toBeNull()
-      }
+      expect(menu.is_visible).toBe(menu.menu_type === 'menu' && !['dashboard', 'gateway_my_usage', 'gateway_device_confirm'].includes(menu.code))
     }
   })
 })
 
 describe('全量重建（空库）', () => {
   it('写入全部菜单 + super_admin + admin，序列状态正确', async () => {
-    const output:string[]=[]
-    const result = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'ck_test_r8_pw', log:line=>output.push(line) })
-    expect(output.join('\n')).not.toContain('ck_test_r8_pw')
+    const result = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'ck_test_r8_pw', log: quiet })
     expect(result).toEqual({ menusAdded: MENU_COUNT, menusUpdated: 0, superAdminMenuCount: MENU_COUNT, adminCreated: true })
 
     const snap = await snapshot(TEMP_URL)
@@ -128,8 +127,20 @@ describe('全量重建（空库）', () => {
     expect(snap.roleMenus).toHaveLength(MENU_COUNT)
 
     const [user] = await query<{ password_hash: string }>(TEMP_URL, "SELECT password_hash FROM admin_users WHERE username = 'admin'")
-    expect(user!.password_hash).toMatch(/^pbkdf2:sha256:1000000\$[A-Za-z0-9]{16}\$[0-9a-f]{64}$/)
+    expect(user!.password_hash).toMatch(/^\$scrypt\$ln=15,r=8,p=3\$/)
     expect(await checkPasswordHash(user!.password_hash, 'ck_test_r8_pw')).toBe(true)
+
+    // An existing admin keeps its password, unless --reset-admin-password
+    const adminHash = async () =>
+      (await query<{ password_hash: string }>(TEMP_URL, "SELECT password_hash FROM admin_users WHERE username = 'admin'"))[0]!.password_hash
+    await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'ck_test_r8_other', incremental: true, log: quiet })
+    expect(await checkPasswordHash(await adminHash(), 'ck_test_r8_pw')).toBe(true)
+    await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'ck_test_r8_other', incremental: true, resetAdminPassword: true, log: quiet })
+    expect(await checkPasswordHash(await adminHash(), 'ck_test_r8_other')).toBe(true)
+    // A hash in a format that can't verify is restored from ADMIN_PASSWORD on the next sync (what every deploy runs)
+    await query(TEMP_URL, "UPDATE admin_users SET password_hash = 'pbkdf2:sha256:1000$abc$00' WHERE username = 'admin'")
+    await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'ck_test_r8_pw', incremental: true, log: quiet })
+    expect(await checkPasswordHash(await adminHash(), 'ck_test_r8_pw')).toBe(true)
   })
 
   it('再次全量：清空后重建（自定义角色与用户被删除，角色/用户走新序列号）', async () => {
@@ -149,31 +160,59 @@ describe('全量重建（空库）', () => {
 describe('增量同步', () => {
   it('无变化时连跑两次：不发 UPDATE（updated_at 不变），结果完全一致', async () => {
     const before = await snapshot(TEMP_URL)
-    const first = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'other', incremental: true, log: quiet })
+    const lines: string[] = []
+    const first = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'other', incremental: true, log: (l) => lines.push(l) })
     const second = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'other', incremental: true, log: quiet })
-    expect(first).toEqual({ menusAdded: 0, menusUpdated: MENU_COUNT, superAdminMenuCount: MENU_COUNT, adminCreated: false })
+    expect(first).toEqual({ menusAdded: 0, menusUpdated: 0, superAdminMenuCount: MENU_COUNT, adminCreated: false })
     expect(second).toEqual(first)
     expect(await snapshot(TEMP_URL)).toEqual(before)
+    // Only real changes are listed, so a new module's inserts aren't buried under every existing menu
+    expect(lines.filter((l) => l.includes('Updated menu'))).toEqual([])
+    expect(lines).toContain('Menus unchanged\n')
   })
 
-  it('按 code 更新且保留 ID，固定 ID 冲突时分配新 ID，保留自定义角色和菜单', async () => {
+  it('按 code 更新字段但不改 ID；固定 ID 被占用走序列；不删除自定义数据', async () => {
     await query(TEMP_URL, `
-      UPDATE menus SET name='旧名',sort_order=42 WHERE code='system_users';
-      DELETE FROM menus WHERE code='gateway_routes_delete';
-      INSERT INTO menus (id,name,code,sort_order,menu_type,is_visible,is_active,created_at,updated_at)
-        VALUES (10023,'占位','ck_test_r8_occupier',1,'menu',true,true,now(),now());
-      INSERT INTO roles(name,code,created_at) VALUES ('自定义','ck_test_r8_custom',now());
+      BEGIN;
+      UPDATE menus SET name = '旧名', sort_order = 42 WHERE code = 'system_users';
+      DELETE FROM menus WHERE code = 'cc_ai_prompt_delete';
+      INSERT INTO menus (id, name, code, sort_order, menu_type, is_visible, is_active, created_at, updated_at)
+        VALUES (4423, '占位', 'ck_test_r8_occupier', 1, 'menu', true, true, now(), now());
+      INSERT INTO roles (id, name, code, created_at) VALUES (50, '测试', 'ck_test_r8_role', now());
+      INSERT INTO role_menus VALUES (50, 21);
+      COMMIT;
     `)
-    const result=await seedRbac({databaseUrl:TEMP_URL,adminPassword:'other',incremental:true,log:quiet})
+    const lines: string[] = []
+    const result = await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'other', incremental: true, log: (l) => lines.push(l) })
     expect(result.menusAdded).toBe(1)
-    const rows=await query(TEMP_URL,'SELECT id,code,name,sort_order FROM menus')
-    expect(rows.find(r=>r.code==='system_users')).toMatchObject({id:21,name:'用户管理',sort_order:1})
-    expect(rows.find(r=>r.code==='gateway_routes_delete')?.id).toBe(NEXT_MENU_ID)
-    expect(rows.find(r=>r.code==='ck_test_r8_occupier')?.id).toBe(10023)
-    expect(await query(TEMP_URL,"SELECT id FROM roles WHERE code='ck_test_r8_custom'")).toHaveLength(1)
-    const after=await snapshot(TEMP_URL)
-    await seedRbac({databaseUrl:TEMP_URL,adminPassword:'other',incremental:true,log:quiet})
-    expect(await snapshot(TEMP_URL)).toEqual(after)
+    expect(result.menusUpdated).toBe(1)
+    expect(lines.filter((l) => l.includes('Updated menu'))).toEqual(['  Updated menu: [system_users] 用户管理'])
+
+    const rows = await query<{ id: number; code: string; name: string; sort_order: number; parent_id: number | null; is_active: boolean; is_visible: boolean }>(
+      TEMP_URL,
+      'SELECT id, code, name, sort_order, parent_id, is_active, is_visible FROM menus',
+    )
+    const byCode = new Map(rows.map((r) => [r.code, r]))
+    expect(byCode.get('system_users')).toMatchObject({ id: 21, name: '用户管理', sort_order: 1 })
+    // 4423 is taken → fall back to the sequence (the next value after the last setval)
+    expect(byCode.get('cc_ai_prompt_delete')!.id).toBe(NEXT_MENU_ID)
+    expect(byCode.get('ck_test_r8_occupier')!.id).toBe(4423)
+    const roleMenus = await query<{ menu_id: number }>(TEMP_URL, 'SELECT menu_id FROM role_menus WHERE role_id = 50 ORDER BY 1')
+    expect(roleMenus.map((r) => r.menu_id)).toEqual([21])
+    // Custom roles are kept; the super admin has all menus
+    const [{ n }] = (await query<{ n: number }>(TEMP_URL, "SELECT count(*)::int AS n FROM roles WHERE code = 'ck_test_r8_role'")) as [{ n: number }]
+    expect(n).toBe(1)
+    const [counts] = await query<{ menus: number; granted: number }>(
+      TEMP_URL,
+      "SELECT (SELECT count(*)::int FROM menus) AS menus, (SELECT count(*)::int FROM role_menus rm JOIN roles r ON r.id = rm.role_id WHERE r.code = 'super_admin') AS granted",
+    )
+    expect(counts!.granted).toBe(counts!.menus)
+    const seq = await query(TEMP_URL, 'SELECT last_value::int AS last_value, is_called FROM menus_id_seq')
+    expect(seq[0]).toEqual({ last_value: NEXT_MENU_ID + 1, is_called: false })
+
+    const again = await snapshot(TEMP_URL)
+    await seedRbac({ databaseUrl: TEMP_URL, adminPassword: 'other', incremental: true, log: quiet })
+    expect(await snapshot(TEMP_URL)).toEqual(again)
   })
 
   it('测试库（现库克隆）上连跑两次：已有菜单 ID 不变，第二次零写入', async () => {

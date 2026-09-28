@@ -7,7 +7,7 @@ test('default quota accepts zero/nonnegative integers and fails closed for inval
   for (const value of ['NaN', '-1', '1.5', '1000000000001']) expect(() => defaultDailyQuota(value)).toThrow()
 })
 
-test('reservation lifetime retains Python default, zero fallback and minimum', () => {
+test('reservation lifetime retains Gateway default, zero fallback and minimum', () => {
   expect(reservationTtlSeconds('')).toBe(3600)
   expect(reservationTtlSeconds('0')).toBe(3600)
   expect(reservationTtlSeconds('20')).toBe(300)

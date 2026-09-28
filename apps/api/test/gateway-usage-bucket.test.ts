@@ -8,7 +8,7 @@ test.each([
   ['2026-04-05T01:30:00', 'Australia/Lord_Howe', '+11:00'],
   ['2026-09-26T00:00:00', 'Asia/Kathmandu', '+05:45'],
 ])(
-  'local bucket %s in %s preserves Python fold=0 offset',
+  'local bucket %s in %s preserves Gateway fold=0 offset',
   (local, zone, offset) => {
     expect(usageBucketIso(local, zone)).toBe(local + offset)
   },

@@ -48,7 +48,7 @@ export type PoolLoad = {
   active: Record<number, number>
   last: number | null
 }
-/** Python smooth session ordering, with Node's documented ascending route priorities. */
+/** Gateway smooth session ordering, with Node's documented ascending route priorities. */
 export function smoothCandidates<T extends Candidate>(
   candidates: T[],
   load: PoolLoad,
@@ -80,7 +80,7 @@ export function smoothCandidates<T extends Candidate>(
   return result
 }
 
-/** Python personal channels: least weighted active load, random weighted ties. */
+/** Gateway personal channels: least weighted active load, random weighted ties. */
 export function personalCandidates<T extends Candidate>(candidates: T[], active: Record<number, number>, random?: () => number): T[] {
   const ranked = orderCandidates(candidates, undefined, random)
   return ranked.sort((a, b) => a.route.priority - b.route.priority ||

@@ -4,7 +4,7 @@ import { SearchSettingsRepository } from './search-settings-repository'
 import { proxyHint, proxyUrlSchema } from './account-proxy'
 import { TavilySearchProvider } from './search-provider'
 import { GatewayError } from './schema'
-const input = z
+export const searchSettingsInput = z
   .object({
     provider: z.enum(['', 'tavily']),
     api_key: z.string().trim().max(8192).optional(),
@@ -71,7 +71,7 @@ export class SearchSettingsService {
     }
   }
   async save(raw: unknown) {
-    const data = input.parse(raw)
+    const data = searchSettingsInput.parse(raw)
     if (data.clear_api_key && data.api_key)
       throw new GatewayError(400, '不能同时替换和清除 API Key')
     if (data.clear_proxy && data.proxy_url)

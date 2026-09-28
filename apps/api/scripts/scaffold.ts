@@ -7,38 +7,57 @@
  *   --name            resource name (snake_case, e.g. customer)
  *   --domain          owning domain (admin or component_center, default admin)
  *   --fields          field list, formatted "field:type,field:type" (default name:str)
- *                     supported types: str / str20 / str50 / str500 / text / int / float / bool / date / datetime
+ *                     supported types: str / str20 / str50 / str500 / text / int / float / bool / date / datetime /
+ *                     file / image (a file-center id; the upload is tracked as a reference of the row) /
+ *                     enum / dict (need --spec for their options / dictionary code)
+ *   --spec <file>     JSON module spec instead of --name / --fields (what an AI agent infers from a requirement;
+ *                     format: docs/spec.schema.json, examples: docs/examples/specs/; title and labels are required):
+ *                     { name, domain?, title?, dataScope?, fields: [{ name, type, label?, required?, unique?, default?,
+ *                     options? (enum: [{ value, label }]), dict? (dict: dictionary code) }], menu?: { parentId?, icon? },
+ *                     i18n?: { 'en-US': { <Chinese text>: <translation> }, 'ja-JP': { … } } }. Chinese labels, NOT NULL / UNIQUE / defaults,
+ *                     option fields and the generated rules test come from it; with `menu` the menu and button
+ *                     permissions are added to scripts/seed-rbac.ts (under the business group, code biz, unless parentId says otherwise)
+ *                     and their names to apps/web/src/locales/menus
+ *   --validate-only   with --spec: check the spec and print what would be generated, write nothing (exit 1 on problems)
+ *   --write-schema    write docs/spec.schema.json (JSON Schema of spec files, built from this script's tables)
  *   --dry-run         print only: write no files, change no registration files, generate no migration
  *   --skip-migration  don't run drizzle-kit generate (for tests)
+ *   --data-scope      rows follow data scope: adds dept_id / created_by (stamped on create) and filters list / detail /
+ *                     edit / delete / export by the caller's scope (common/data-scope.ts)
  *   --root            repository root (default: the repo this script lives in; for tests)
  *
  * Generated files (existing files are skipped, never overwritten):
  *   apps/api/src/db/schema/<domain>/<name>.ts                         table definition + toDict
  *   apps/api/src/modules/<domain>/<name>/{schema,repository,service,routes}.ts
  *   apps/api/test/<admin|cc>-<name>.test.ts                           basic API tests
- *   apps/web/src/modules/<module>/api/<name>.js
- *   apps/web/src/modules/<module>/pages/<subdir>/<name>/index.jsx   shadcn/ui list page (same structure as the users page)
+ *   apps/web/src/modules/<module>/api/<name>.ts                     typed from the module's OpenAPI entries
+ *   apps/web/src/modules/<module>/pages/<subdir>/<name>/index.tsx   shadcn/ui list page (same structure as the users page)
  *   apps/web/src/modules/<module>/pages/<subdir>/<name>/locales/{en-US,ja-JP}.json
- *                     only when the page uses fixed Chinese text that apps/web/src/locales doesn't translate
+ *                     the module's webhook event descriptions, plus any fixed page text no locales file translates yet
  * Auto-registration:
  *   apps/api/src/db/schema/index.ts          export * from './<domain>/<name>'
  *   apps/api/src/modules/<domain>/router.ts  import + await register<Name>Routes(app)
+ *   docs/apifox-full.openapi.json            the module's endpoints (scripts/lib/scaffold-openapi.ts), then
+ *   apps/web/src/shared/api/openapi.d.ts     regenerated from it (apps/web/scripts/api-types.mjs), so the API file's types resolve
  * Migration:
  *   drizzle-kit generate --name <name>
  *
  * Backend directory / file names use lowercase hyphens per repo convention (ck_demo → ck-demo, component_center → component-center);
- * the table name is `<name>s`; the frontend path is admin/pages/<name> or component_center/pages/admin/<name>_page.
+ * the table name is `<name>s`; the frontend page is admin/pages/<name> or component_center/pages/patterns/<name>_page.
  *
- * i18n: generated pages follow apps/web/src/modules/admin/pages/users/index.jsx (Chinese source text is the key,
- * see apps/web/src/i18n/index.js); backend error messages stay Chinese and are translated by apps/api/src/i18n/messages.ts.
+ * i18n: generated pages follow apps/web/src/modules/admin/pages/users/index.tsx (Chinese source text is the key,
+ * see apps/web/src/i18n/index.ts); backend error messages stay Chinese and are translated by apps/api/src/i18n/messages.ts.
  * Generated code comments are English.
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
+import { ADMIN_PLACEMENT, GALLERY_PLACEMENT, insertMenus, menuNames, planMenus, type MenuEntry, type MenuRequest } from './lib/menus'
+import { applyScaffoldOpenApi } from './lib/scaffold-openapi'
+import { specSchemaText } from './lib/spec-schema'
 import { printUsage } from './lib/usage'
 
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -50,21 +69,37 @@ export interface FieldTypeSpec {
   column: string
   /** Builder to import from drizzle-orm/pg-core */
   builder: string
-  /** Normalizer function in schema.ts */
-  coerce: 'toStr' | 'toInt' | 'toNumeric' | 'toBool' | 'toDate' | 'toDateTime'
+  /** Value kind: picks the request-body field builder, the import-cell parsing and the test samples */
+  kind: 'text' | 'int' | 'decimal' | 'bool' | 'date' | 'dateTime' | 'fileId' | 'choice'
 }
 
 export const FIELD_TYPE_MAP: Record<string, FieldTypeSpec> = {
-  str: { column: 'varchar({ length: 100 })', builder: 'varchar', coerce: 'toStr' },
-  str50: { column: 'varchar({ length: 50 })', builder: 'varchar', coerce: 'toStr' },
-  str20: { column: 'varchar({ length: 20 })', builder: 'varchar', coerce: 'toStr' },
-  str500: { column: 'varchar({ length: 500 })', builder: 'varchar', coerce: 'toStr' },
-  text: { column: 'text()', builder: 'text', coerce: 'toStr' },
-  int: { column: 'integer()', builder: 'integer', coerce: 'toInt' },
-  float: { column: 'numeric({ precision: 10, scale: 2 })', builder: 'numeric', coerce: 'toNumeric' },
-  bool: { column: 'boolean()', builder: 'boolean', coerce: 'toBool' },
-  date: { column: "date({ mode: 'string' })", builder: 'date', coerce: 'toDate' },
-  datetime: { column: "timestamp({ mode: 'string' })", builder: 'timestamp', coerce: 'toDateTime' },
+  str: { column: 'varchar({ length: 100 })', builder: 'varchar', kind: 'text' },
+  str50: { column: 'varchar({ length: 50 })', builder: 'varchar', kind: 'text' },
+  str20: { column: 'varchar({ length: 20 })', builder: 'varchar', kind: 'text' },
+  str500: { column: 'varchar({ length: 500 })', builder: 'varchar', kind: 'text' },
+  text: { column: 'text()', builder: 'text', kind: 'text' },
+  int: { column: 'integer()', builder: 'integer', kind: 'int' },
+  float: { column: 'numeric({ precision: 10, scale: 2 })', builder: 'numeric', kind: 'decimal' },
+  bool: { column: 'boolean()', builder: 'boolean', kind: 'bool' },
+  date: { column: "date({ mode: 'string' })", builder: 'date', kind: 'date' },
+  datetime: { column: "timestamp({ mode: 'string' })", builder: 'timestamp', kind: 'dateTime' },
+  file: { column: 'varchar({ length: 36 })', builder: 'varchar', kind: 'fileId' },
+  image: { column: 'varchar({ length: 36 })', builder: 'varchar', kind: 'fileId' },
+  /** Fixed options (spec `options`): stores the value, shows the label */
+  enum: { column: 'varchar({ length: 50 })', builder: 'varchar', kind: 'choice' },
+  /** Data dictionary item (spec `dict` = dictionary code): stores the item value */
+  dict: { column: 'varchar({ length: 100 })', builder: 'varchar', kind: 'text' },
+}
+
+/** Enum fields: the list filters on each of them (exact match) */
+export function enumFieldsOf(fields: Field[]): string[] {
+  return fields.filter(([, t]) => t === 'enum').map(([f]) => f)
+}
+
+/** Fields holding file-center ids (file / image types) */
+export function fileFieldsOf(fields: Field[]): string[] {
+  return fields.filter(([, t]) => fieldSpec(t).kind === 'fileId').map(([f]) => f)
 }
 
 /** Field type spec; unknown types are treated as str */
@@ -74,9 +109,63 @@ export function fieldSpec(type: string): FieldTypeSpec {
 
 export type Field = [name: string, type: string]
 
+/** Badge colours of enum options in the list (apps/web StatusBadge tones) */
+export const OPTION_TONES = ['neutral', 'brand', 'info', 'success', 'warning', 'danger'] as const
+export type OptionTone = (typeof OPTION_TONES)[number]
+
+/** A choice of an enum field */
+export interface FieldOption {
+  value: string
+  label: string
+  /** Badge colour in the list (default neutral), e.g. in use → success, scrapped → danger */
+  tone?: OptionTone
+}
+
+/** What a --spec file can say about a field beyond its name and type */
+export interface FieldMeta {
+  /** Chinese label (default: the field name, title-cased) */
+  label?: string
+  /** Must be filled: NOT NULL column, checked on create / edit, required in the form */
+  required?: boolean
+  /** UNIQUE column */
+  unique?: boolean
+  /** Used when the value is missing on create (column default as well) */
+  default?: string | number | boolean | null
+  /** enum type: the choices */
+  options?: FieldOption[]
+  /** dict type: dictionary code (System → Configuration → Data dictionary) */
+  dict?: string
+}
+
+/** Menu registration in scripts/seed-rbac.ts (spec `menu`) */
+export interface MenuSpec {
+  /** Parent menu id; default: the business group (code biz, created on first use) for admin, the gallery's Page
+   * patterns directory (code cc_patterns) for component_center */
+  parentId?: number
+  /** Icon name from apps/web/src/lib/menu-icons.ts */
+  icon?: string
+}
+
+/** Translations of the spec's Chinese texts (title, labels, option labels): { Chinese → translation } per language */
+export type SpecI18n = Partial<Record<'en-US' | 'ja-JP', Record<string, string>>>
+
+/** A --spec file (JSON): everything an agent infers about a module (docs/spec.schema.json) */
+export interface SpecFile {
+  /** Editor hint: path or URL of docs/spec.schema.json (ignored by the scaffold) */
+  $schema?: string
+  name: string
+  domain?: 'admin' | 'component_center'
+  /** Chinese title of the page / menu (default: the name, title-cased) */
+  title?: string
+  dataScope?: boolean
+  fields: Array<{ name: string; type: string } & FieldMeta>
+  menu?: MenuSpec
+  i18n?: SpecI18n
+}
+
 // ─── Naming helpers ────────────────────────────────────────────────────────────
 
-/** Python `''.join(w.capitalize() for w in name.split('_'))` */
+/** snake_case → PascalCase: each `_`-separated word capitalised, the rest lower-cased */
 export function toPascal(name: string): string {
   return name
     .split('_')
@@ -93,16 +182,13 @@ export function toKebab(name: string): string {
   return name.replace(/_/g, '-')
 }
 
-/** Python `name.replace('_', ' ').title()`: a letter following a non-letter is upper-cased, the rest lower-cased */
+/** snake_case → Title Case: words split on `_`, each starting with a capital (`phone_number` → `Phone Number`) */
 export function toLabel(name: string): string {
-  let prevIsLetter = false
-  let out = ''
-  for (const ch of name.replace(/_/g, ' ')) {
-    const isLetter = ch.toLowerCase() !== ch.toUpperCase()
-    out += isLetter ? (prevIsLetter ? ch.toLowerCase() : ch.toUpperCase()) : ch
-    prevIsLetter = isLetter
-  }
-  return out
+  return name
+    .split('_')
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
 }
 
 /** Emit as a single-quoted TS string literal */
@@ -129,20 +215,64 @@ export interface ScaffoldSpec {
   domainDir: string
   /** Frontend module directory: admin / component_center */
   webModule: string
+  /** Page directory under the module's pages/: <name> (admin) / patterns/<name>_page (component_center, next to the gallery's page patterns) */
+  pageDir: string
   permPrefix: string
   menuComponent: string
   apiBase: string
   nameField: string
   exportFields: Field[]
   importFields: Field[]
+  /** --data-scope: dept_id / created_by columns and scope filtering */
+  dataScope: boolean
+  /** Page / menu title (Chinese when the spec gives one) */
+  title: string
+  /** Per-field extras from a --spec file (label, required, unique, default, options, dict) */
+  meta: Record<string, FieldMeta>
+  i18n: SpecI18n
 }
 
-export function buildSpec(name: string, domain: 'admin' | 'component_center', fields: Field[]): ScaffoldSpec {
+/** Field label shown in the page, headers and messages */
+export function labelOf(s: Pick<ScaffoldSpec, 'meta'>, field: string): string {
+  return s.meta[field]?.label || toLabel(field)
+}
+
+/** TS literal of a field's default value (as the column and the body declaration store it), or null when there is none */
+export function defaultLiteral(type: string, value: FieldMeta['default']): string | null {
+  if (value === null || value === undefined || value === '') return null
+  switch (fieldSpec(type).kind) {
+    case 'int':
+      return String(Math.trunc(Number(value)))
+    case 'bool':
+      return value === true || value === 'true' || value === 1 || value === '1' ? 'true' : 'false'
+    case 'fileId':
+      return null
+    default:
+      return q(String(value))
+  }
+}
+
+export function buildSpec(
+  name: string,
+  domain: 'admin' | 'component_center',
+  fields: Field[],
+  options: { dataScope?: boolean; title?: string; meta?: Record<string, FieldMeta>; i18n?: SpecI18n } = {},
+): ScaffoldSpec {
   const domainPrefix = domain === 'admin' ? 'system' : 'cc'
-  // Name field (search, required import column): the first str / str50 field; str20 (codes, phones, statuses) and str500 (links) don't count
-  const nameField = fields.find(([, t]) => t === 'str' || t === 'str50')?.[0] ?? fields[0]?.[0] ?? 'name'
+  const webModule = domain === 'admin' ? 'admin' : 'component_center'
+  const pageDir = domain === 'admin' ? name : `patterns/${name}_page`
+  // Name field (search, required import column): a text field called name / title, else the first str field, else the
+  // first str50 field (codes such as `code: str50` often come first and would make search code-only); str20 (codes,
+  // phones, statuses) and str500 (links) don't count
+  const isName = ([, t]: Field) => t === 'str' || t === 'str50'
+  const nameField =
+    fields.find((f) => isName(f) && (f[0] === 'name' || f[0] === 'title'))?.[0] ??
+    fields.find(([, t]) => t === 'str')?.[0] ??
+    fields.find(([, t]) => t === 'str50')?.[0] ??
+    fields[0]?.[0] ??
+    'name'
   // Import / export / table columns cover all fields;
-  // the required column (name field) comes first; non-string fields are converted by buildValues, and conversion failures become error rows
+  // the required column (name field) comes first; cells are checked by the body declaration (rowToBody), failures become error rows
   const importFields = [...fields.filter(([f]) => f === nameField), ...fields.filter(([f]) => f !== nameField)]
   return {
     name,
@@ -153,13 +283,19 @@ export function buildSpec(name: string, domain: 'admin' | 'component_center', fi
     kebab: toKebab(name),
     table: `${name}s`,
     domainDir: domain === 'admin' ? 'admin' : 'component-center',
-    webModule: domain === 'admin' ? 'admin' : 'component_center',
+    webModule,
+    pageDir,
     permPrefix: `${domainPrefix}_${name}`,
-    menuComponent: domain === 'admin' ? `admin/${name}` : `component_center/admin/${name}_page`,
-    apiBase: `/api/admin/${toKebab(name)}s`,
+    menuComponent: `${webModule}/${pageDir}`,
+    // component_center modules live under the gallery's prefix (writable in demo mode, like the other gallery APIs)
+    apiBase: domain === 'admin' ? `/api/admin/${toKebab(name)}s` : `/api/admin/component-center/${toKebab(name)}s`,
     nameField,
     exportFields: fields,
     importFields: importFields.length > 0 ? importFields : [[nameField, 'str']],
+    dataScope: options.dataScope ?? false,
+    title: options.title || toLabel(name),
+    meta: options.meta ?? {},
+    i18n: options.i18n ?? {},
   }
 }
 
@@ -168,10 +304,24 @@ export function buildSpec(name: string, domain: 'admin' | 'component_center', fi
 export function genDbSchema(s: ScaffoldSpec): string {
   const builders = new Set(['pgTable', 'serial'])
   for (const [, t] of s.fields) builders.add(fieldSpec(t).builder)
-  const columnLines = s.fields.map(([f, t]) => `  ${key(f)}: ${fieldSpec(t).column},`)
+  const columnLines = s.fields.map(([f, t]) => {
+    const meta = s.meta[f] ?? {}
+    const fallback = defaultLiteral(t, meta.default)
+    const modifiers = `${meta.required ? '.notNull()' : ''}${meta.unique ? '.unique()' : ''}${fallback ? `.default(${fallback})` : ''}`
+    return `  ${key(f)}: ${fieldSpec(t).column}${modifiers},`
+  })
   const dictLines = s.fields.map(([f, t]) =>
     fieldSpec(t).builder === 'timestamp' ? `    ${key(f)}: toIso(item.${f}),` : `    ${key(f)}: item.${f},`,
   )
+  if (s.dataScope) {
+    builders.add('integer')
+    columnLines.push(
+      '  /** Data scope: owning department and creator, stamped on create (see DATA_SCOPE in the module schema) */',
+      '  dept_id: integer(),',
+      '  created_by: integer(),',
+    )
+    dictLines.push('    dept_id: item.dept_id,', '    created_by: item.created_by,')
+  }
   return `/**
  * ${s.table}
  * Generated by scripts/scaffold.ts (name=${s.name}, domain=${s.domain}).
@@ -206,85 +356,135 @@ ${dictLines.join('\n')}
 `
 }
 
-const COERCERS: Record<FieldTypeSpec['coerce'], string> = {
-  toStr: `function toStr(value: unknown): string | null {
-  return value === null || value === undefined ? null : pyStr(value)
-}`,
-  toInt: `function toInt(field: string, value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null
-  try {
-    return pyInt(value)
-  } catch {
-    throw invalid(field)
+/**
+ * The field's declaration in the request body (common/validation.ts): the field builder for its type, then the spec's
+ * default (used when the value is missing / null) or required rule.
+ */
+export function fieldDeclaration(s: ScaffoldSpec, f: string, t: string): string {
+  const meta = s.meta[f] ?? {}
+  const label = q(labelOf(s, f))
+  const empty = q(`${labelOf(s, f)}不能为空`)
+  const fallback = defaultLiteral(t, meta.default)
+  const values = `[${(meta.options ?? []).map((o) => q(o.value)).join(', ')}] as const`
+  const wrap = (optional: string) =>
+    fallback !== null ? `withDefault(${optional}, ${fallback})` : meta.required ? `required(${optional}, ${empty})` : optional
+  switch (fieldSpec(t).kind) {
+    case 'int':
+      return fallback !== null ? `field.int(${label}, ${fallback})` : wrap(`field.optionalInt(${label})`)
+    case 'decimal':
+      return wrap(`field.decimal(${label})`)
+    case 'bool':
+      return fallback !== null ? `field.bool(${label}, ${fallback})` : wrap(`field.optionalBool(${label})`)
+    case 'date':
+      return wrap(`field.date(${label})`)
+    case 'dateTime':
+      return wrap(`field.dateTime(${label})`)
+    case 'fileId':
+      return meta.required ? `required(field.fileId(${label}), ${empty})` : `field.fileId(${label})`
+    case 'choice':
+      return fallback !== null ? `field.choice(${label}, ${values}, ${fallback})` : wrap(`field.optionalChoice(${label}, ${values})`)
+    default:
+      return fallback === null && meta.required ? `field.requiredText(${label}, ${empty})` : wrap(`field.text(${label})`)
   }
-}`,
-  toNumeric: `/** numeric columns stay strings (no parseFloat, to avoid precision loss) */
-function toNumeric(field: string, value: unknown): string | null {
-  if (value === null || value === undefined || value === '') return null
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  if (typeof value === 'string' && /^[+-]?(\\d+\\.?\\d*|\\.\\d+)$/.test(value.trim())) return value.trim()
-  throw invalid(field)
-}`,
-  toBool: `function toBool(field: string, value: unknown): boolean | null {
-  if (value === null || value === undefined || value === '') return null
-  if (typeof value === 'boolean') return value
-  if (value === 1 || value === 0) return value === 1
-  const text = String(value).trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on', '是'].includes(text)) return true
-  if (['0', 'false', 'no', 'off', '否'].includes(text)) return false
-  throw invalid(field)
-}`,
-  toDate: `/** 'YYYY-MM-DD' (ISO strings with a time part are accepted; the date part is kept) */
-function toDate(field: string, value: unknown): string | null {
-  if (value === null || value === undefined || value === '') return null
-  const match = typeof value === 'string' ? /^(\\d{4}-\\d{2}-\\d{2})([ T].*)?$/.exec(value.trim()) : null
-  if (!match) throw invalid(field)
-  return match[1]!
-}`,
-  toDateTime: `/** 'YYYY-MM-DD HH:mm[:ss[.ffffff]]' or ISO with a 'T' separator */
-function toDateTime(field: string, value: unknown): string | null {
-  if (value === null || value === undefined || value === '') return null
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (!/^\\d{4}-\\d{2}-\\d{2}([ T]\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,6})?)?)?$/.test(text)) throw invalid(field)
-  return text.replace('T', ' ')
-}`,
+}
+
+/** How an import cell (text) becomes a body value; null when the text is taken as it is */
+function cellConversion(s: ScaffoldSpec, f: string, t: string): string | null {
+  const cell = `row.${f}`
+  switch (fieldSpec(t).kind) {
+    case 'int':
+      return `intCell(${cell})`
+    case 'bool':
+      return `parseYesNo(${cell}) ?? ${cell}`
+    case 'choice':
+      return `FIELD_OPTIONS.${f}!.find((o) => o.label === ${cell})?.value ?? ${cell}`
+    case 'dateTime':
+      // A file's times are the importer's wall time (exports write them that way too)
+      return `withZoneOffset(${cell})`
+    default:
+      return null
+  }
 }
 
 export function genModuleSchema(s: ScaffoldSpec): string {
-  const used = [...new Set(s.fields.map(([, t]) => fieldSpec(t).coerce))]
-  const pyImports = [
-    ...(used.includes('toInt') ? ['pyInt'] : []),
-    ...(used.includes('toStr') ? ['pyStr'] : []),
-  ]
-  const needsInvalid = used.some((c) => c !== 'toStr')
+  const kinds = s.fields.map(([, t]) => fieldSpec(t).kind)
+  const declarations = s.fields.map(([f, t]) => `  ${key(f)}: ${fieldDeclaration(s, f, t)},`)
+  const conversions = s.fields
+    .map(([f, t]) => [f, cellConversion(s, f, t)] as const)
+    .filter((entry): entry is readonly [string, string] => entry[1] !== null)
+    .map(([f, expr]) => `  if (row.${f} !== undefined) body.${f} = ${expr}`)
+  const usesRequired = declarations.some((d) => d.includes('required('))
+  const usesDefault = declarations.some((d) => d.includes('withDefault('))
+  const validationImports = ['field', ...(kinds.includes('bool') ? ['parseYesNo'] : []), ...(usesRequired ? ['required'] : []), ...(usesDefault ? ['withDefault'] : [])]
+  const enumFields = s.fields.filter(([, t]) => fieldSpec(t).kind === 'choice').map(([f]) => f)
+  const exportLine = (f: string, t: string): string => {
+    const label = q(labelOf(s, f))
+    if (enumFields.includes(f)) return `  ${key(f)}: [${label}, (item) => optionLabel(${q(f)}, item.${f})],`
+    const kind = fieldSpec(t).kind
+    if (kind === 'bool') return `  ${key(f)}: [${label}, (item) => (item.${f} === null ? '' : item.${f} ? '是' : '否')],`
+    if (kind === 'dateTime') return `  ${key(f)}: [${label}, (item) => formatDateTime(item.${f})],`
+    return `  ${key(f)}: ${label},`
+  }
   const exportLines = [
     `  id: 'ID',`,
-    ...s.exportFields.map(([f]) => `  ${key(f)}: ${q(toLabel(f))},`),
-    `  created_at: '创建时间',`,
+    ...s.exportFields.map(([f, t]) => exportLine(f, t)),
+    `  created_at: ['创建时间', (item) => formatDateTime(item.created_at)],`,
   ]
-  const importLines = s.importFields.map(([f]) => `  ${key(toLabel(f))}: ${q(f)},`)
-  const valueLines = s.fields.map(([f, t]) => {
-    const c = fieldSpec(t).coerce
-    const call = c === 'toStr' ? `toStr(data[${q(f)}])` : `${c}(${q(f)}, data[${q(f)}])`
-    return `  if (!partial || Object.hasOwn(data, ${q(f)})) values.${f} = ${call}`
-  })
+  const importLines = s.importFields.map(([f]) => `  ${key(labelOf(s, f))}: ${q(f)},`)
+  const optionsBlock = enumFields.length
+    ? `
+/** Choices of the enum fields: the value is stored, the label is shown (and accepted on import) */
+export const FIELD_OPTIONS: Record<string, { value: string; label: string }[]> = {
+${enumFields
+  .map((f) => `  ${key(f)}: [${(s.meta[f]?.options ?? []).map((o) => `{ value: ${q(o.value)}, label: ${q(o.label)} }`).join(', ')}],`)
+  .join('\n')}
+}
+
+/** Label of an enum value (the value itself when it isn't one of the choices) */
+export function optionLabel(field: string, value: string | null): string | null {
+  return FIELD_OPTIONS[field]?.find((o) => o.value === value)?.label ?? value
+}
+`
+    : ''
+  const intCellHelper = kinds.includes('int')
+    ? `
+/** An integer cell becomes a number; anything else stays text, so the declaration reports it */
+const intCell = (text: string) => (/^[+-]?\\d+$/.test(text.trim()) ? Number(text.trim()) : text)
+`
+    : ''
 
   return `/**
- * ${s.pascal} module schema layer (generated by scripts/scaffold.ts)
+ * ${s.pascal} module schema layer (generated by scripts/scaffold.ts): the request body, import / export columns
  *
- * Request bodies are lenient: jsonBody() provides the \`request.get_json() or {}\` semantics; values are normalized by field type here,
- * and a value that can't be converted to its column type returns 400. Add required / uniqueness checks as the business needs.
+ * The body is declared field by field (common/validation.ts): each field's type, and the spec's required / default
+ * rules. Import rows go through the same declaration (rowToBody). Add uniqueness or cross-field checks in the service.
  */
 
 import { z } from 'zod'
-${needsInvalid ? `import { ServiceError } from '@/common/errors'\n` : ''}${pyImports.length > 0 ? `import { ${pyImports.join(', ')} } from '@/common/py'\n` : ''}import type { ${s.pascal}, New${s.pascal} } from '@/db/schema'
+import { formatDateTime } from '@/common/serialize'
+${kinds.includes('dateTime') ? "import { withZoneOffset } from '@/common/time-zone'\n" : ''}import { ${validationImports.join(', ')} } from '@/common/validation'
+import type { ${s.pascal} } from '@/db/schema'
+${optionsBlock}
+export const ${s.camel}Body = z.object({
+${declarations.join('\n')}
+})
 
-/** Request body: loose and fully optional; normalization happens in buildValues */
-export const ${s.camel}BodySchema = z.record(z.string(), z.unknown()).nullish()
+export type ${s.pascal}Input = z.output<typeof ${s.camel}Body>
+${
+  enumFieldsOf(s.fields).length
+    ? `\n/** List filters: exact match on the enum fields ('' = no filter) */\nexport type ${s.pascal}Filters = Record<${enumFieldsOf(s.fields).map(q).join(' | ')}, string>\n`
+    : ''
+}
+/** Export request: the rows (ids; none = every row), the columns (fields; none = every column), the file type */
+export const ${s.camel}ExportBody = z.object({
+  ids: field.ids('导出记录'),
+  fields: field.textList('导出字段'),
+  file_type: field.text('文件类型'),
+})
 
 /**
  * Export columns: a header string (value taken from the toDict field of the same name), or [header, value function]
- * (when a conversion is needed, e.g. enum values shown as Chinese labels, booleans shown as yes / no text).
+ * (when a conversion is needed: enum values shown as their labels, booleans as yes / no text, times as the caller's wall time).
  * Headers are translated into Chinese by the AI / developer; field validation errors also use these headers as field names.
  */
 export type ExportColumn = string | [header: string, value: (item: ${s.pascal}) => unknown]
@@ -303,21 +503,11 @@ export function fieldLabel(field: string): string {
 export const IMPORT_HEADER_MAP: Record<string, string> = {
 ${importLines.join('\n')}
 }
-
-/** Column values after normalizing the request body: every field may be absent or null; required / unique is enforced by DB constraints (the service turns violations into 400) */
-export type ${s.pascal}Values = { [K in keyof Omit<New${s.pascal}, 'id' | 'created_at' | 'updated_at'>]?: New${s.pascal}[K] | null }
-${needsInvalid ? `\nfunction invalid(field: string): ServiceError {\n  return new ServiceError(\`\${fieldLabel(field)}的值无效\`, 400)\n}\n` : ''}
-${used.map((c) => COERCERS[c]).join('\n\n')}
-
-/**
- * Request body → column values.
- * - Create (partial=false): every field is written; missing ones become null
- * - Edit (partial=true): only fields present in the request body are written
- */
-export function buildValues(data: Record<string, unknown>, partial: boolean): ${s.pascal}Values {
-  const values: ${s.pascal}Values = {}
-${valueLines.join('\n')}
-  return values
+${intCellHelper}
+/** An import row (text cells) → the request-body shape, checked by the same declaration${conversions.length ? ': numbers and yes / no are parsed, option labels become values' : ''} */
+export function rowToBody(row: Record<string, string>): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...row }
+${conversions.join('\n')}${conversions.length ? '\n' : ''}  return body
 }
 
 export interface ErrorRow {
@@ -333,24 +523,58 @@ export function buildErrorRow(line: number, reason: string, row: Record<string, 
     row: Object.fromEntries(Object.entries(row ?? {}).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])),
   }
 }
-`
+${s.dataScope ? DATA_SCOPE_MARKER : ''}`
 }
+
+const DATA_SCOPE_MARKER = `
+/**
+ * Data scope declaration (checked by \`pnpm verify\`): rows belong to dept_id, and "own data" means created_by.
+ * The repository must filter with dataScopeWhere.
+ */
+export const DATA_SCOPE = { deptColumn: 'dept_id', ownerColumn: 'created_by' } as const
+`
 
 export function genRepository(s: ScaffoldSpec): string {
   const nameType = s.fields.find(([f]) => f === s.nameField)?.[1] ?? 'str'
-  const isText = fieldSpec(nameType).coerce === 'toStr'
+  const isText = fieldSpec(nameType).kind === 'text'
   const searchExpr = isText
     ? `ilike(${s.table}.${s.nameField}, \`%\${search}%\`)`
     : `ilike(sql\`\${${s.table}.${s.nameField}}::text\`, \`%\${search}%\`)`
-  const ormImports = ['count', 'desc', 'eq', 'ilike', 'inArray', ...(isText ? [] : ['sql']), 'type SQL']
+  const ds = s.dataScope
+  const fileFields = fileFieldsOf(s.fields)
+  const enumFields = enumFieldsOf(s.fields)
+  const refsOf = (row: string) => `{ ${fileFields.map((f) => `${key(f)}: ${row}.${f}`).join(', ')} }`
+  const ormImports = [...(ds || enumFields.length ? ['and'] : []), 'count', 'desc', 'eq', 'ilike', 'inArray', ...(isText ? [] : ['sql']), 'type SQL']
+  const t = s.table
+  const scopeParam = ds ? ', scope: DataScope' : ''
+  const listWhere = `${ds || enumFields.length ? 'and(' : ''}this.searchWhere(search)${enumFields.length ? ', this.filterWhere(filters)' : ''}${ds ? ', this.scopeWhere(scope)' : ''}${ds || enumFields.length ? ')' : ''}`
+  const filterMethod = enumFields.length
+    ? `
+  /** List filters: exact match on each enum field that has a value */
+  private filterWhere(filters: ${s.pascal}Filters): SQL | undefined {
+    return and(${enumFields.map((f) => `filters.${f} ? eq(${t}.${f}, filters.${f}) : undefined`).join(', ')})
+  }
+`
+    : ''
+  const exportWhere = ds
+    ? `and(ids ? inArray(${t}.id, ids) : undefined, this.scopeWhere(scope))`
+    : `ids ? inArray(${t}.id, ids) : undefined`
+  const getWhere = ds ? `and(eq(${t}.id, id), this.scopeWhere(scope))` : `eq(${t}.id, id)`
+  const scopeMethod = ds
+    ? `
+  /** Data scope: rows of the caller's visible departments, plus rows they created */
+  private scopeWhere(scope: DataScope): SQL | undefined {
+    return dataScopeWhere(scope, { deptColumn: ${t}.dept_id, ownerColumn: ${t}.created_by })
+  }
+`
+    : ''
   return `/**
  * ${s.pascal} repository layer (generated by scripts/scaffold.ts): plain database reads / writes, no business logic
  */
 
 import { ${ormImports.join(', ')} } from 'drizzle-orm'
-import type { Executor } from '@/db/client'
-import { ${s.table}, type ${s.pascal}, type New${s.pascal} } from '@/db/schema'
-import type { ${s.pascal}Values } from './schema'
+${ds ? `import { dataScopeWhere, UNRESTRICTED, type DataScope } from '@/common/data-scope'\n` : ''}${fileFields.length ? `import { clearFileRefs, syncFileRefs } from '@/common/file-refs'\n` : ''}import type { Executor } from '@/db/client'
+import { ${s.table}, type ${s.pascal}, type New${s.pascal} } from '@/db/schema'${enumFields.length ? `\nimport type { ${s.pascal}Filters } from './schema'` : ''}
 
 export class ${s.pascal}Repository {
   constructor(private readonly db: Executor) {}
@@ -358,9 +582,9 @@ export class ${s.pascal}Repository {
   private searchWhere(search: string): SQL | undefined {
     return search ? ${searchExpr} : undefined
   }
-
-  async listPage(page: number, perPage: number, search: string) {
-    const where = this.searchWhere(search)
+${filterMethod}${scopeMethod}
+  async listPage(page: number, perPage: number, search: string${enumFields.length ? `, filters: ${s.pascal}Filters` : ''}${scopeParam}) {
+    const where = ${listWhere}
     const [totalRow] = await this.db.select({ n: count() }).from(${s.table}).where(where)
     const items = await this.db
       .select()
@@ -373,41 +597,37 @@ export class ${s.pascal}Repository {
   }
 
   /** Export: all rows when ids is null; ordered by id descending */
-  async listForExport(ids: number[] | null): Promise<${s.pascal}[]> {
+  async listForExport(ids: number[] | null${scopeParam}): Promise<${s.pascal}[]> {
     return this.db
       .select()
       .from(${s.table})
-      .where(ids ? inArray(${s.table}.id, ids) : undefined)
+      .where(${exportWhere})
       .orderBy(desc(${s.table}.id))
   }
 
-  async getById(id: number): Promise<${s.pascal} | null> {
-    const [row] = await this.db.select().from(${s.table}).where(eq(${s.table}.id, id)).limit(1)
+  async getById(id: number${ds ? ', scope: DataScope = UNRESTRICTED' : ''}): Promise<${s.pascal} | null> {
+    const [row] = await this.db.select().from(${s.table}).where(${getWhere}).limit(1)
     return row ?? null
   }
 
-  /**
-   * values come from buildValues (every field optional); once a column gets .notNull() the database rejects missing values,
-   * and the service turns not-null / unique constraint errors into 400, so accepting them as the insert type is fine here.
-   */
-  async insert(values: ${s.pascal}Values): Promise<${s.pascal}> {
+  async insert(values: New${s.pascal}): Promise<${s.pascal}> {
     const [row] = await this.db
       .insert(${s.table})
-      .values(values as New${s.pascal})
-      .returning()
+      .values(values)
+      .returning()${fileFields.length ? `\n    // Uploaded files used by this row are registered so the file center doesn't clean them up\n    await syncFileRefs(this.db, ${q(s.table)}, row!.id, ${refsOf('row!')})` : ''}
     return row!
   }
 
-  async update(id: number, values: ${s.pascal}Values): Promise<${s.pascal} | null> {
+  async update(id: number, values: Partial<New${s.pascal}>): Promise<${s.pascal} | null> {
     const [row] = await this.db
       .update(${s.table})
-      .set(values as Partial<New${s.pascal}>)
+      .set(values)
       .where(eq(${s.table}.id, id))
-      .returning()
+      .returning()${fileFields.length ? `\n    if (row) await syncFileRefs(this.db, ${q(s.table)}, row.id, ${refsOf('row')})` : ''}
     return row ?? null
   }
 
-  async delete(id: number): Promise<void> {
+  async delete(id: number): Promise<void> {${fileFields.length ? `\n    await clearFileRefs(this.db, ${q(s.table)}, id)` : ''}
     await this.db.delete(${s.table}).where(eq(${s.table}.id, id))
   }
 }
@@ -415,26 +635,52 @@ export class ${s.pascal}Repository {
 }
 
 export function genService(s: ScaffoldSpec): string {
+  const ds = s.dataScope
+  const scopeParam = ds ? ', scope: DataScope = UNRESTRICTED' : ''
+  const scopeArg = ds ? ', scope' : ''
+  const filtered = enumFieldsOf(s.fields).length > 0
+  const stampHelper = ds
+    ? `
+/** Owner columns of a new row (data scope): the creator and their department */
+function stamp(actor: Actor | undefined) {
+  return actor ? { created_by: actor.userId, dept_id: actor.deptId } : {}
+}
+`
+    : ''
   return `/**
  * ${s.pascal} service layer (generated by scripts/scaffold.ts): business logic; throws ServiceError and never touches HTTP objects
  */
 
+import type { z } from 'zod'
 import { ServiceError } from '@/common/errors'
 import { notFound } from '@/common/http'
-import { pyTruthy } from '@/common/py'
-import { dbConstraintError } from '@/common/db-errors'
+import { dbConstraintError, writeError } from '@/common/db-errors'
 import { buildTable, normalizeTableFileType, readTableFile, TableFileError, type UploadedFile } from '@/common/tabular'
+import { exportColumns, parseBody } from '@/common/validation'
+${ds ? `import { UNRESTRICTED, type Actor, type DataScope } from '@/common/data-scope'\n` : ''}import type { EventBus } from '@/common/webhooks'
 import type { Db } from '@/db/client'
 import { ${s.camel}ToDict, type ${s.pascal} } from '@/db/schema'
 import { ${s.pascal}Repository } from './repository'
-import { buildErrorRow, buildValues, EXPORT_FIELD_MAP, fieldLabel, IMPORT_HEADER_MAP, type ErrorRow } from './schema'
-
-type Data = Record<string, unknown>
-
+import {
+  buildErrorRow,
+  EXPORT_FIELD_MAP,
+  fieldLabel,
+  IMPORT_HEADER_MAP,
+  rowToBody,
+  ${s.camel}Body,
+  type ${s.camel}ExportBody,
+  type ${s.pascal}Input,${filtered ? `\n  type ${s.pascal}Filters,` : ''}
+  type ErrorRow,
+} from './schema'
+${stampHelper}
 export class ${s.pascal}Service {
   private readonly repo: ${s.pascal}Repository
 
-  constructor(private readonly db: Db) {
+  constructor(
+    private readonly db: Db,
+    /** Webhook events (${s.name}.created / updated / deleted), emitted after the write committed */
+    private readonly events?: Pick<EventBus, 'emit'>,
+  ) {
     this.repo = new ${s.pascal}Repository(db)
   }
 
@@ -442,19 +688,18 @@ export class ${s.pascal}Service {
     try {
       return await this.db.transaction((tx) => fn(new ${s.pascal}Repository(tx)))
     } catch (err) {
-      if (err instanceof ServiceError) throw err
-      // Input problems such as unique conflicts / values too long / numeric overflow → 400; anything else → 500
-      throw dbConstraintError(err) ?? new ServiceError(err instanceof Error ? err.message : String(err), 500)
+      // Business errors as they are; input the database rejects (unique conflicts, too long …) → 400; anything else → 500
+      throw writeError(err)
     }
   }
 
-  async listItems(page: number, perPage: number, search: string) {
-    const { total, items } = await this.repo.listPage(page, perPage, search)
+  async listItems(page: number, perPage: number, search: string${filtered ? `, filters: ${s.pascal}Filters` : ''}${scopeParam}) {
+    const { total, items } = await this.repo.listPage(page, perPage, search${filtered ? ', filters' : ''}${scopeArg})
     return { items: items.map(${s.camel}ToDict), total, page, per_page: perPage }
   }
 
-  async getOr404(id: number): Promise<${s.pascal}> {
-    const item = await this.repo.getById(id)
+  async getOr404(id: number${scopeParam}): Promise<${s.pascal}> {
+    const item = await this.repo.getById(id${scopeArg})
     if (!item) throw notFound()
     return item
   }
@@ -463,34 +708,35 @@ export class ${s.pascal}Service {
     return ${s.camel}ToDict(item)
   }
 
-  async createItem(data: Data) {
-    const values = buildValues(data, false)
-    const created = await this.inTx((repo) => repo.insert(values))
-    return ${s.camel}ToDict(created)
+  async createItem(values: ${s.pascal}Input${ds ? ', actor?: Actor' : ''}) {
+    const created = await this.inTx((repo) => repo.insert(${ds ? '{ ...values, ...stamp(actor) }' : 'values'}))
+    const dict = ${s.camel}ToDict(created)
+    await this.events?.emit(${q(`${s.name}.created`)}, dict)
+    return dict
   }
 
-  async updateItem(item: ${s.pascal}, data: Data) {
-    const values = buildValues(data, true)
+  async updateItem(item: ${s.pascal}, values: Partial<${s.pascal}Input>) {
     if (Object.keys(values).length === 0) return ${s.camel}ToDict(item)
     const updated = await this.inTx((repo) => repo.update(item.id, values))
     if (!updated) throw notFound()
-    return ${s.camel}ToDict(updated)
+    const dict = ${s.camel}ToDict(updated)
+    await this.events?.emit(${q(`${s.name}.updated`)}, dict)
+    return dict
   }
 
   async deleteItem(item: ${s.pascal}) {
     await this.inTx((repo) => repo.delete(item.id))
+    await this.events?.emit(${q(`${s.name}.deleted`)}, { id: item.id })
     return { message: '删除成功' }
   }
 
   /** Export: fields default to all export fields; empty ids exports everything; xlsx by default */
-  async exportItems(data: Data) {
-    const fileType = normalizeTableFileType(data.file_type, 'xlsx')
-    const rawFields = pyTruthy(data.fields) && Array.isArray(data.fields) ? data.fields : Object.keys(EXPORT_FIELD_MAP)
-    const fields = rawFields.map((f) => String(f))
-    const ids =
-      pyTruthy(data.ids) && Array.isArray(data.ids) ? data.ids.filter((v): v is number => Number.isInteger(v)) : null
+  async exportItems(options: z.output<typeof ${s.camel}ExportBody>${scopeParam}) {
+    const fileType = normalizeTableFileType(options.file_type, 'xlsx')
+    const fields = exportColumns(options.fields, EXPORT_FIELD_MAP)
+    const ids = options.ids.length > 0 ? options.ids : null
 
-    const items = await this.repo.listForExport(ids)
+    const items = await this.repo.listForExport(ids${scopeArg})
     const headers = fields.map((f) => fieldLabel(f))
     const rows = items.map((item) => {
       const dict: Record<string, unknown> = ${s.camel}ToDict(item)
@@ -500,16 +746,16 @@ export class ${s.pascal}Service {
         return f in dict ? dict[f] : ''
       })
     })
-    return buildTable(headers, rows, ${q(`${s.name}_export`)}, fileType)
+    return buildTable(headers, rows, ${q(`${s.table}_export`)}, fileType)
   }
 
   async downloadTemplate(fileTypeRaw: unknown) {
     const fileType = normalizeTableFileType(fileTypeRaw, 'xlsx')
-    return buildTable(Object.keys(IMPORT_HEADER_MAP), [], ${q(`${s.name}_import_template`)}, fileType)
+    return buildTable(Object.keys(IMPORT_HEADER_MAP), [], ${q(`${s.table}_import_template`)}, fileType)
   }
 
   /** Import: the whole batch is one transaction; any error row rolls it all back and returns 400 + error_rows */
-  async importItems(file: UploadedFile | null) {
+  async importItems(file: UploadedFile | null${ds ? ', actor?: Actor' : ''}) {
     let table
     try {
       table = await readTableFile(file)
@@ -527,21 +773,21 @@ export class ${s.pascal}Service {
           errors.push(buildErrorRow(line, \`\${requiredHeader}不能为空\`, row))
           continue
         }
-        const mapped: Data = {}
+        const mapped: Record<string, string> = {}
         for (const [header, value] of Object.entries(row)) {
           const field = IMPORT_HEADER_MAP[header]
           if (field && value) mapped[field] = value
         }
         let values
         try {
-          values = buildValues(mapped, true)
+          values = parseBody(${s.camel}Body, rowToBody(mapped))
         } catch (err) {
           if (!(err instanceof ServiceError)) throw err
           errors.push(buildErrorRow(line, err.message, row))
           continue
         }
         try {
-          await repo.insert(values)
+          await repo.insert(${ds ? '{ ...values, ...stamp(actor) }' : 'values'})
         } catch (err) {
           // The database rejected this row (unique conflict, too long, ...): the transaction is aborted, so return it with the error rows found so far
           const rowError = dbConstraintError(err)
@@ -567,24 +813,39 @@ export class ${s.pascal}Service {
 
 export function genRoutes(s: ScaffoldSpec): string {
   const p = s.permPrefix
+  const ds = s.dataScope
+  const scope = ds ? ', await resolveDataScope(request)' : ''
+  const actor = ds ? ', await currentActor(request)' : ''
   return `/**
  * ${s.pascal} routes (generated by scripts/scaffold.ts)
  *
- * Permission codes: ${p} (view / template), ${p}_add, ${p}_edit, ${p}_delete, ${p}_export, ${p}_import
- * Routes with an id load the record first (404 when missing), then check permissions (403).
+ * Permission codes: ${p} (view), ${p}_add, ${p}_edit, ${p}_delete, ${p}_export, ${p}_import (import and its template)
+ * Routes with an id check permissions first (403), then load the record (404), so a caller without permission can't
+ * tell whether an id exists. JSON bodies are declared with routeBody (common/validation.ts): the schema goes on the route
+ * for the OpenAPI body check, and is parsed after the permission check.${
+    ds ? '\n * Data scope: records outside the caller\'s scope are a 404, like missing ones; new records are stamped with the creator.' : ''
+  }
  */
 
 import type { FastifyInstance } from 'fastify'
 import { hasMenuPermission, loginRequired } from '@/common/auth'
-import { getUploadedFile, intParam, jsonBody, parseIntParam, queryString } from '@/common/http'
+${ds ? `import { currentActor, resolveDataScope } from '@/common/data-scope'\n` : ''}import { getUploadedFile, intParam, parseIntParam, queryString } from '@/common/http'
 import { parsePagination } from '@/common/pagination'
 import { sendTable } from '@/common/tabular'
+import { routeBody } from '@/common/validation'
+import { declareEvents } from '@/common/webhooks'
+import { ${s.camel}Body, ${s.camel}ExportBody } from './schema'
 import { ${s.pascal}Service } from './service'
 
 const BASE = ${q(s.apiBase)}
 
+// Webhook events this module emits (offered on the webhooks page)
+declareEvents({
+${EVENT_ACTIONS.map((action) => `  ${q(`${s.name}.${action}`)}: ${q(eventLabel(s, action))},`).join('\n')}
+})
+
 export async function register${s.pascal}Routes(app: FastifyInstance): Promise<void> {
-  const service = new ${s.pascal}Service(app.db)
+  const service = new ${s.pascal}Service(app.db, app.events)
   const opts = { preHandler: loginRequired }
   const itemPath = \`\${BASE}/\${intParam('item_id')}\`
   const itemId = (params: unknown) => parseIntParam((params as { item_id: string }).item_id)
@@ -593,50 +854,57 @@ export async function register${s.pascal}Routes(app: FastifyInstance): Promise<v
     if (!(await hasMenuPermission(request, ${q(p)}))) {
       return reply.status(403).send({ error: '无权限' })
     }
-    const { page, per_page } = parsePagination(request.query as Record<string, unknown>)
-    return service.listItems(page, per_page, queryString(request, 'search').trim())
+    const { page, per_page } = parsePagination(request.query as Record<string, unknown>)${
+      enumFieldsOf(s.fields).length
+        ? `\n    const filters = { ${enumFieldsOf(s.fields).map((f) => `${key(f)}: queryString(request, ${q(f)}).trim()`).join(', ')} }`
+        : ''
+    }
+    return service.listItems(page, per_page, queryString(request, 'search').trim()${enumFieldsOf(s.fields).length ? ', filters' : ''}${scope})
   })
 
-  app.post(BASE, opts, async (request, reply) => {
+  const create = routeBody(${s.camel}Body, 'create')
+  app.post(BASE, { ...opts, ...create.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, ${q(`${p}_add`)}))) {
-      return reply.status(403).send({ error: '无权限新增' })
+      return reply.status(403).send({ error: '无权限新建' })
     }
-    return reply.status(201).send(await service.createItem(jsonBody(request)))
+    return reply.status(201).send(await service.createItem(create.parse(request)${actor}))
   })
 
   app.get(itemPath, opts, async (request, reply) => {
-    const item = await service.getOr404(itemId(request.params))
     if (!(await hasMenuPermission(request, ${q(p)}))) {
       return reply.status(403).send({ error: '无权限' })
     }
+    const item = await service.getOr404(itemId(request.params)${scope})
     return service.getItem(item)
   })
 
-  app.put(itemPath, opts, async (request, reply) => {
-    const item = await service.getOr404(itemId(request.params))
+  const update = routeBody(${s.camel}Body, 'patch')
+  app.put(itemPath, { ...opts, ...update.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, ${q(`${p}_edit`)}))) {
       return reply.status(403).send({ error: '无权限编辑' })
     }
-    return service.updateItem(item, jsonBody(request))
+    const item = await service.getOr404(itemId(request.params)${scope})
+    return service.updateItem(item, update.parse(request))
   })
 
   app.delete(itemPath, opts, async (request, reply) => {
-    const item = await service.getOr404(itemId(request.params))
     if (!(await hasMenuPermission(request, ${q(`${p}_delete`)}))) {
       return reply.status(403).send({ error: '无权限删除' })
     }
+    const item = await service.getOr404(itemId(request.params)${scope})
     return service.deleteItem(item)
   })
 
-  app.post(\`\${BASE}/export\`, opts, async (request, reply) => {
+  const exportRequest = routeBody(${s.camel}ExportBody, 'create')
+  app.post(\`\${BASE}/export\`, { ...opts, ...exportRequest.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, ${q(`${p}_export`)}))) {
       return reply.status(403).send({ error: '无权限导出' })
     }
-    return sendTable(reply, await service.exportItems(jsonBody(request)))
+    return sendTable(reply, await service.exportItems(exportRequest.parse(request)${scope}))
   })
 
   app.get(\`\${BASE}/template\`, opts, async (request, reply) => {
-    if (!(await hasMenuPermission(request, ${q(p)}))) {
+    if (!(await hasMenuPermission(request, ${q(`${p}_import`)}))) {
       return reply.status(403).send({ error: '无权限' })
     }
     return sendTable(reply, await service.downloadTemplate(queryString(request, 'file_type', 'xlsx')))
@@ -646,7 +914,7 @@ export async function register${s.pascal}Routes(app: FastifyInstance): Promise<v
     if (!(await hasMenuPermission(request, ${q(`${p}_import`)}))) {
       return reply.status(403).send({ error: '无权限导入' })
     }
-    return service.importItems(await getUploadedFile(request))
+    return service.importItems(await getUploadedFile(request)${actor})
   })
 }
 `
@@ -654,20 +922,27 @@ export async function register${s.pascal}Routes(app: FastifyInstance): Promise<v
 
 // ─── Backend test generation ───────────────────────────────────────────────────
 
-/** Sample value per scaffold type (TS source snippet); strings carry a tag so repeated creates don't hit unique constraints */
-function sampleExpr(field: string, type: string): string {
-  const maxLen: Record<string, number> = { str: 100, str20: 20, str50: 50, str500: 500 }
-  switch (fieldSpec(type).coerce) {
-    case 'toInt':
-      return '3'
-    case 'toNumeric':
-      return "'12.5'"
-    case 'toBool':
+/**
+ * Sample value per scaffold type (TS source snippet); strings carry a tag so repeated creates don't hit unique
+ * constraints, and unique numbers come from nextNumber()
+ */
+function sampleExpr(field: string, type: string, meta: FieldMeta = {}): string {
+  const maxLen: Record<string, number> = { str: 100, str20: 20, str50: 50, str500: 500, dict: 100 }
+  switch (fieldSpec(type).kind) {
+    case 'int':
+      return meta.unique ? 'nextNumber()' : '3'
+    case 'decimal':
+      return meta.unique ? 'String(nextNumber() % 90_000_000)' : "'12.5'"
+    case 'choice':
+      return q(meta.options?.[0]?.value ?? '')
+    case 'bool':
       return 'true'
-    case 'toDate':
+    case 'date':
       return "'2026-01-15'"
-    case 'toDateTime':
+    case 'dateTime':
       return "'2026-01-15 08:30:00'"
+    case 'fileId':
+      return 'null'
     default: {
       const text = `('ck-' + tag + '-${field}')`
       const len = maxLen[type] ?? (type === 'text' ? 0 : 100)
@@ -681,11 +956,41 @@ export function testFilePath(s: ScaffoldSpec): string {
 }
 
 export function genApiTest(s: ScaffoldSpec): string {
-  const sampleLines = s.fields.map(([f, t]) => `    ${key(f)}: ${sampleExpr(f, t)},`)
+  const sampleLines = s.fields.map(([f, t]) => `    ${key(f)}: ${sampleExpr(f, t, s.meta[f])},`)
+  const rulesTest = genRulesTest(s)
+  const ds = s.dataScope
+  const helperImports = 'buildTestApp, cleanupFixture, multipartFile, openTestDb, scopedSession, superAdminSession, type AuthedSession'
+  const dataScopeTest = ds
+    ? `
+
+  it('数据权限：仅本人范围只看到自己创建的记录，别人的记录 404', async () => {
+    const own = await scopedSession(app, handle, {
+      name: ${q(`${s.name}_ds_self`)},
+      codes: [${q(s.permPrefix)}, ${q(`${s.permPrefix}_add`)}, ${q(`${s.permPrefix}_edit`)}, ${q(`${s.permPrefix}_export`)}],
+      dataScope: 'self',
+    })
+    const mine = await own.inject({ method: 'POST', url: BASE, payload: sample('ds-mine') })
+    expect(mine.statusCode, mine.body).toBe(201)
+    expect(mine.json().created_by).toBe(own.userId)
+    const theirs = (await s.inject({ method: 'POST', url: BASE, payload: sample('ds-theirs') })).json()
+
+    const listed = (await own.inject({ url: BASE + '?per_page=200' })).json().items.map((i: { id: number }) => i.id)
+    expect(listed).toContain(mine.json().id)
+    expect(listed).not.toContain(theirs.id)
+    expect((await own.inject({ url: BASE + '/' + theirs.id })).statusCode).toBe(404)
+    expect((await own.inject({ method: 'PUT', url: BASE + '/' + theirs.id, payload: sample('ds-x') })).statusCode).toBe(404)
+    const exported = await own.inject({ method: 'POST', url: BASE + '/export', payload: { file_type: 'csv', fields: ['id'] } })
+    expect(exported.body.split('\\r\\n').filter(Boolean).slice(1)).toEqual([String(mine.json().id)])
+  })`
+    : ''
+  // Only when a unique numeric field needs it (an unused helper would fail lint in the generated file)
+  const uniqueNumbers = sampleLines.some((l) => l.includes('nextNumber()'))
+    ? 'let seq = 0\n/** A number no other sample uses (unique numeric fields) */\nconst nextNumber = () => (Date.now() % 1_000_000) * 1000 + ++seq\n\n'
+    : ''
   return `/**
  * ${s.pascal} basic API tests (generated by scripts/scaffold.ts)
  *
- * Covers: CRUD, list pagination and search, 404, export, import template, successful import / whole-batch rollback on an empty required column.
+ * Covers: CRUD, list pagination and search, 404, permission before lookup (403), export, import template, successful import / whole-batch rollback on an empty required column.
  * After adding business rules (required / unique / enum / defaults ...), update sample() and the assertions, and add the matching failure cases.
  * Test data is cleaned up by id: only rows created while this file runs are deleted.
  */
@@ -696,11 +1001,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { DbHandle } from '@/db/client'
 import { ${s.table} } from '@/db/schema'
 import { IMPORT_HEADER_MAP } from '@/modules/${s.domainDir}/${s.kebab}/schema'
-import { buildTestApp, multipartFile, openTestDb, superAdminSession, type AuthedSession } from './helpers'
+import { ${helperImports} } from './helpers'
 
 const BASE = ${q(s.apiBase)}
 
-/** Sample value per field (the tag makes strings differ on every call) */
+${uniqueNumbers}/** Sample value per field (the tag makes strings differ on every call) */
 function sample(tag: string): Record<string, unknown> {
   return {
 ${sampleLines.join('\n')}
@@ -737,6 +1042,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await handle.db.delete(${s.table}).where(gt(${s.table}.id, baselineId))
+  await cleanupFixture(handle)
   await app.close()
   await handle.pool.end()
 })
@@ -771,6 +1077,16 @@ describe(${q(`${s.table} 接口`)}, () => {
     expect((await s.inject({ url: BASE + '/99999999' })).statusCode).toBe(404)
   })
 
+  it('先查权限再查记录：没有权限时不论记录是否存在都是 403', async () => {
+    const viewer = await scopedSession(app, handle, { name: ${q(`${s.name}_viewer`)}, codes: [${q(s.permPrefix)}], dataScope: 'all' })
+    const item = (await s.inject({ method: 'POST', url: BASE, payload: sample('perm') })).json()
+    for (const id of [item.id, 99999999]) {
+      expect((await viewer.inject({ method: 'PUT', url: BASE + '/' + id, payload: sample('perm-x') })).statusCode).toBe(403)
+      expect((await viewer.inject({ method: 'DELETE', url: BASE + '/' + id })).statusCode).toBe(403)
+    }
+    expect((await viewer.inject({ url: BASE + '/99999999' })).statusCode).toBe(404)
+  })
+
   it('导出 csv 与导入模板', async () => {
     const exported = await s.inject({ method: 'POST', url: BASE + '/export', payload: { file_type: 'csv' } })
     expect(exported.statusCode).toBe(200)
@@ -786,6 +1102,8 @@ describe(${q(`${s.table} 接口`)}, () => {
 
     const before = await countNew()
     const requiredField = IMPORT_HEADER_MAP[Object.keys(IMPORT_HEADER_MAP)[0]!]!
+    // A row whose only filled cell is the required one would be blank without it, and blank rows are skipped
+    if (!Object.entries(sample('imp3')).some(([f, v]) => f !== requiredField && v !== null && v !== '')) return
     const bad = await s.inject({
       method: 'POST',
       url: BASE + '/import',
@@ -794,41 +1112,118 @@ describe(${q(`${s.table} 接口`)}, () => {
     expect(bad.statusCode).toBe(400)
     expect(bad.json().error_count).toBe(1)
     expect(await countNew()).toBe(before)
-  })
+  })${rulesTest}${dataScopeTest}
 })
 `
 }
 
-// ─── Frontend code generation (shadcn/ui, same structure as apps/web/src/modules/admin/pages/users/index.jsx) ──
+/** Field rules from a --spec file (required, fixed options, unique, defaults): one generated test case, or '' */
+function genRulesTest(s: ScaffoldSpec): string {
+  const lines: string[] = []
+  for (const [f, t] of s.fields) {
+    const meta = s.meta[f] ?? {}
+    const label = labelOf(s, f)
+    // A required field with a default gets the default instead of an error on create
+    if (meta.required && defaultLiteral(t, meta.default) === null) {
+      lines.push(
+        `    // ${f}: required`,
+        `    const missing${toPascal(f)} = await s.inject({ method: 'POST', url: BASE, payload: { ...sample('rq-${f}'), ${key(f)}: '' } })`,
+        `    expect([missing${toPascal(f)}.statusCode, missing${toPascal(f)}.json()]).toEqual([400, { error: ${q(`${label}不能为空`)} }])`,
+      )
+    }
+    if (fieldSpec(t).kind === 'choice') {
+      lines.push(
+        `    // ${f}: only the listed option values (import files may use the labels)`,
+        `    const bad${toPascal(f)} = await s.inject({ method: 'POST', url: BASE, payload: { ...sample('op-${f}'), ${key(f)}: 'not-an-option' } })`,
+        `    expect([bad${toPascal(f)}.statusCode, bad${toPascal(f)}.json()]).toEqual([400, { error: ${q(`${label}的值无效`)} }])`,
+      )
+      const value = meta.options?.[0]?.value
+      if (value !== undefined) {
+        lines.push(
+          `    // ${f}: the list filters on it (exact match)`,
+          `    await s.inject({ method: 'POST', url: BASE, payload: { ...sample('fl-${f}'), ${key(f)}: ${q(value)} } })`,
+          `    const filtered${toPascal(f)} = (await s.inject({ method: 'GET', url: \`\${BASE}?${f}=${value}&per_page=200\` })).json()`,
+          `    expect(filtered${toPascal(f)}.items.length).toBeGreaterThan(0)`,
+          `    expect(filtered${toPascal(f)}.items.every((row: { ${key(f)}: string | null }) => row.${f} === ${q(value)})).toBe(true)`,
+        )
+      }
+    }
+    if (meta.unique) {
+      lines.push(
+        `    // ${f}: unique`,
+        `    const first${toPascal(f)} = (await s.inject({ method: 'POST', url: BASE, payload: sample('uq1-${f}') })).json()`,
+        `    const dup${toPascal(f)} = await s.inject({ method: 'POST', url: BASE, payload: { ...sample('uq2-${f}'), ${key(f)}: first${toPascal(f)}.${f} } })`,
+        `    expect([dup${toPascal(f)}.statusCode, dup${toPascal(f)}.json()]).toEqual([400, { error: '字段「${f}」的值已被使用，请换一个值后再保存' }])`,
+      )
+    }
+    const fallback = defaultLiteral(t, meta.default)
+    if (fallback !== null && fieldSpec(t).kind !== 'dateTime') {
+      const read = fieldSpec(t).kind === 'decimal' ? `Number(defaulted${toPascal(f)}.${f})` : `defaulted${toPascal(f)}.${f}`
+      const expected = fieldSpec(t).kind === 'decimal' ? `Number(${fallback})` : fallback
+      lines.push(
+        `    // ${f}: default when left empty`,
+        `    const defaulted${toPascal(f)} = (await s.inject({ method: 'POST', url: BASE, payload: { ...sample('df-${f}'), ${key(f)}: null } })).json()`,
+        `    expect(${read}).toEqual(${expected})`,
+      )
+    }
+  }
+  if (lines.length === 0) return ''
+  return `
+
+  it('字段规则：必填、选项、唯一、默认值', async () => {
+${lines.join('\n')}
+  })`
+}
+
+// ─── Frontend code generation (shadcn/ui, same structure as apps/web/src/modules/admin/pages/users/index.tsx) ──
 //
-// The api file comes from a fixed template; the page follows docs/frontend-redesign-plan.md:
+// The api file comes from a fixed template; the page follows docs/frontend-design-system.md:
 // PageHeader + FilterBar/SearchInput + DataTable + FormDialog/FormFields + ImportDialog/ExportDialog
 // + ConfirmAction + toast + useCrudList. Field → form component / table column rendering: see FRONTEND_FIELD_MAP.
 //
-// i18n (see apps/web/src/i18n/index.js): Chinese source text is the key. Strings passed to shared components stay
+// i18n (see apps/web/src/i18n/index.ts): Chinese source text is the key. Strings passed to shared components stay
 // plain Chinese (the components translate them); JSX text, native attributes and interpolated text go through
 // t() / <Trans>. Every fixed Chinese string the page emits must have an entry in PAGE_TEXTS; the ones missing from
 // apps/web/src/locales are written to the page's own locales/ (see genFrontendLocales).
 
-type FrontendKind = 'str' | 'text' | 'int' | 'float' | 'bool' | 'date' | 'datetime'
+type FrontendKind = 'str' | 'text' | 'int' | 'float' | 'bool' | 'date' | 'datetime' | 'file' | 'image' | 'enum' | 'dict'
 
 export interface FrontendFieldSpec {
-  /** Form component from FormFields.jsx */
-  component: 'FormInput' | 'FormTextarea' | 'FormNumber' | 'FormSwitch' | 'FormDate' | 'FormDateTime'
+  /** Form component from FormFields.tsx */
+  component:
+    | 'FormInput'
+    | 'FormTextarea'
+    | 'FormNumber'
+    | 'FormSwitch'
+    | 'FormDate'
+    | 'FormDateTime'
+    | 'FormFileUpload'
+    | 'FormImageUpload'
+    | 'FormSelect'
   /** Extra props for the form component (JSX snippet) */
   props: string
   /** useForm default value (JS literal) */
   empty: string
+  /**
+   * Type of the value in FormValues: what the form component holds (FormNumber: a number or null; the API's decimal
+   * strings stay strings until edited), which the create / edit body must accept (enum fields: their option values)
+   */
+  formType: string
 }
 
 export const FRONTEND_FIELD_MAP: Record<FrontendKind, FrontendFieldSpec> = {
-  str: { component: 'FormInput', props: '', empty: "''" },
-  text: { component: 'FormTextarea', props: '', empty: "''" },
-  int: { component: 'FormNumber', props: ' step={1}', empty: 'null' },
-  float: { component: 'FormNumber', props: ' step={0.01}', empty: 'null' },
-  bool: { component: 'FormSwitch', props: '', empty: 'false' },
-  date: { component: 'FormDate', props: '', empty: "''" },
-  datetime: { component: 'FormDateTime', props: '', empty: "''" },
+  str: { component: 'FormInput', props: '', empty: "''", formType: 'string' },
+  text: { component: 'FormTextarea', props: '', empty: "''", formType: 'string' },
+  int: { component: 'FormNumber', props: ' step={1}', empty: 'null', formType: 'number | null' },
+  float: { component: 'FormNumber', props: ' step={0.01}', empty: 'null', formType: 'number | string | null' },
+  bool: { component: 'FormSwitch', props: '', empty: 'false', formType: 'boolean' },
+  date: { component: 'FormDate', props: '', empty: "''", formType: 'string' },
+  datetime: { component: 'FormDateTime', props: '', empty: "''", formType: 'string' },
+  file: { component: 'FormFileUpload', props: '', empty: 'null', formType: 'string | null' },
+  image: { component: 'FormImageUpload', props: '', empty: 'null', formType: 'string | null' },
+  // options props are added per field (fixed choices / dictionary items)
+  enum: { component: 'FormSelect', props: '', empty: 'null', formType: 'string | null' },
+  dict: { component: 'FormSelect', props: '', empty: 'null', formType: 'string | null' },
 }
 
 /** scaffold type → frontend field kind (str20 / str50 / str500 / unknown types all map to str) */
@@ -844,11 +1239,13 @@ export type Catalogs = Partial<Record<PageLang, Record<string, string>>>
 /**
  * Translations of every fixed Chinese string a generated page can contain.
  * Most of them are shared CRUD strings already in apps/web/src/locales; the values must match those files exactly
- * (a key translated differently in two locales files is a conflict, see apps/web/test/i18n.test.js).
+ * (a key translated differently in two locales files is a conflict, see apps/web/test/i18n.test.ts).
  * They are still listed here so a checkout whose shared locales lack a string gets it in the page's own locales.
  */
 export const PAGE_TEXTS: Record<string, Record<PageLang, string>> = {
   创建时间: { 'en-US': 'Created at', 'ja-JP': '作成日時' },
+  此项必填: { 'en-US': 'This field is required', 'ja-JP': 'この項目は必須です' },
+  查看: { 'en-US': 'View', 'ja-JP': '表示' },
   是: { 'en-US': 'Yes', 'ja-JP': 'はい' },
   否: { 'en-US': 'No', 'ja-JP': 'いいえ' },
   加载失败: { 'en-US': 'Failed to load', 'ja-JP': '読み込みに失敗しました' },
@@ -865,19 +1262,14 @@ export const PAGE_TEXTS: Record<string, Record<PageLang, string>> = {
   '删除后不可恢复。': { 'en-US': "This can't be undone.", 'ja-JP': '削除すると元に戻せません。' },
   导入: { 'en-US': 'Import', 'ja-JP': 'インポート' },
   导出: { 'en-US': 'Export', 'ja-JP': 'エクスポート' },
-  新增: { 'en-US': 'Add', 'ja-JP': '追加' },
+  新建: { 'en-US': 'Add', 'ja-JP': '追加' },
   '搜索…': { 'en-US': 'Search…', 'ja-JP': '検索…' },
   '已勾选 <0>{{count}}</0> 条，导出时将优先导出勾选数据': {
     'en-US': '<0>{{count}}</0> selected. Export will use the selected rows.',
     'ja-JP': '<0>{{count}}</0> 件を選択中。エクスポート時は選択したデータが優先されます',
   },
   清空勾选: { 'en-US': 'Clear selection', 'ja-JP': '選択を解除' },
-  暂无数据: { 'en-US': 'No data', 'ja-JP': 'データがありません' },
-  换个关键词试试: { 'en-US': 'Try a different keyword', 'ja-JP': '別のキーワードでお試しください' },
-  '点击右上角「新增」添加第一条数据': {
-    'en-US': 'Click "Add" in the top right to add the first record',
-    'ja-JP': '右上の「追加」から最初のデータを追加してください',
-  },
+  还没有记录: { 'en-US': 'No records yet', 'ja-JP': 'レコードはまだありません' },
   导出设置: { 'en-US': 'Export settings', 'ja-JP': 'エクスポート設定' },
   '已勾选 {{count}} 条，将优先导出勾选数据。': {
     'en-US': '{{count}} selected. Only the selected rows will be exported.',
@@ -896,46 +1288,72 @@ export const PAGE_TEXTS: Record<string, Record<PageLang, string>> = {
   },
 }
 
+/**
+ * Frontend API file (TypeScript, in the style of apps/web/src/modules/admin/api/users.ts): parameter, body and result
+ * types come from the module's OpenAPI entries (scripts/lib/scaffold-openapi.ts, same paths), which scaffold writes into
+ * docs/apifox-full.openapi.json and turns into apps/web/src/shared/api/openapi.d.ts
+ */
 export function genFrontendApi(s: ScaffoldSpec): string {
+  const list = q(s.apiBase)
+  const item = q(`${s.apiBase}/{item_id}`)
+  const sub = (path: string) => q(`${s.apiBase}/${path}`)
   return `import request from '@/shared/api/request'
+import type { ApiBody, ApiItem, ApiQuery, ApiResponse } from '@/shared/api/types'
 
-const BASE = '/admin/${s.kebab}s'
+/** A record as the API returns it (times are ISO 8601 UTC, decimals are strings) */
+export type ${s.pascal} = ApiItem<${list}>
+/** Create body (edit takes any subset of the same fields) */
+export type ${s.pascal}Body = ApiBody<${list}, 'post'>
+/** Export request: ids (none = every row), fields (none = every column), file_type */
+export type ${s.pascal}ExportBody = ApiBody<${sub('export')}, 'post'>
+/** File type of exports and the import template */
+export type ${s.pascal}FileType = NonNullable<ApiQuery<${sub('template')}>['file_type']>
 
-export const getItems = (params) => request.get(BASE, { params })
-export const createItem = (data) => request.post(BASE, data)
-export const updateItem = (id, data) => request.put(\`\${BASE}/\${id}\`, data)
-export const deleteItem = (id) => request.delete(\`\${BASE}/\${id}\`)
+const BASE = ${q(s.apiBase.replace(/^\/api/, ''))}
 
-export const exportItems = (data) =>
-  request.post(\`\${BASE}/export\`, data, { responseType: 'blob' })
+export const getItems = (params?: ApiQuery<${list}>) => request.get<unknown, ApiResponse<${list}>>(BASE, { params })
+export const createItem = (data: ${s.pascal}Body) => request.post<unknown, ApiResponse<${list}, 'post'>>(BASE, data)
+export const updateItem = (id: number, data: ApiBody<${item}, 'put'>) =>
+  request.put<unknown, ApiResponse<${item}, 'put'>>(\`\${BASE}/\${id}\`, data)
+export const deleteItem = (id: number) => request.delete<unknown, ApiResponse<${item}, 'delete'>>(\`\${BASE}/\${id}\`)
 
-export const downloadTemplate = (fileType = 'xlsx') =>
-  request.get(\`\${BASE}/template\`, { params: { file_type: fileType }, responseType: 'blob' })
+export const exportItems = (data: ${s.pascal}ExportBody) =>
+  request.post<unknown, Blob>(\`\${BASE}/export\`, data, { responseType: 'blob' })
 
-export const importItems = (file) => {
+export const downloadTemplate = (fileType: ${s.pascal}FileType = 'xlsx') =>
+  request.get<unknown, Blob>(\`\${BASE}/template\`, { params: { file_type: fileType }, responseType: 'blob' })
+
+export const importItems = (file: Blob) => {
   const formData = new FormData()
   formData.append('file', file)
-  return request.post(\`\${BASE}/import\`, formData, {
+  return request.post<unknown, ApiResponse<${sub('import')}, 'post'>>(\`\${BASE}/import\`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
 `
 }
 
-/** Edit: record → form value (dates converted to the DatePicker / DateTimePicker format) */
+/** Edit: record → form value (dates as DatePicker takes them; DateTimePicker takes the API time as it is) */
 function formValueExpr(field: string, kind: FrontendKind): string {
   const v = `record.${field}`
   if (kind === 'bool') return `Boolean(${v})`
   if (kind === 'date') return `formatDate(${v}, '')`
-  if (kind === 'datetime') return `formatDateTime(${v}, '')`
-  if (kind === 'int' || kind === 'float') return `${v} ?? null`
+  if (kind === 'int' || kind === 'float' || kind === 'file' || kind === 'image' || kind === 'enum' || kind === 'dict') return `${v} ?? null`
   return `${v} ?? ''`
 }
 
-/** Table column: bool → StatusBadge, dates → formatDate / formatDateTime, numbers → tabular-nums */
-function columnLines(field: string, kind: FrontendKind): string[] {
-  const head = [`    {`, `      key: ${q(field)},`, `      title: ${q(toLabel(field))},`, `      dataIndex: ${q(field)},`]
+/** Short values (codes, numbers, dates, options) never wrap; free text keeps a minimum width, so a narrow screen scrolls the table instead of squeezing a column to one character */
+const NOWRAP_TYPES = new Set(['str20', 'str50', 'int', 'float', 'date', 'datetime', 'dict'])
+
+/**
+ * Table column: bool / enum → StatusBadge, dates → formatDate / formatDateTime, numbers → tabular-nums, dictionary
+ * items → their label
+ */
+function columnLines(s: ScaffoldSpec, field: string, kind: FrontendKind, type: string): string[] {
+  const label = labelOf(s, field)
+  const head = [`    {`, `      key: ${q(field)},`, `      title: ${q(label)},`, `      dataIndex: ${q(field)},`]
   const tail = [`    },`]
+  const nowrap = NOWRAP_TYPES.has(type) ? ' whitespace-nowrap' : ''
   if (kind === 'bool') {
     // StatusBadge translates string children, so the Chinese stays plain
     return [
@@ -950,44 +1368,128 @@ function columnLines(field: string, kind: FrontendKind): string[] {
     ]
   }
   if (kind === 'date') {
-    return [...head, `      width: 120,`, `      className: 'text-muted-foreground tabular-nums',`, `      render: (value) => formatDate(value),`, ...tail]
+    return [...head, `      width: 120,`, `      className: 'text-muted-foreground tabular-nums${nowrap}',`, `      render: (value) => formatDate(value),`, ...tail]
   }
   if (kind === 'datetime') {
-    return [...head, `      width: 180,`, `      className: 'text-muted-foreground tabular-nums',`, `      render: (value) => formatDateTime(value),`, ...tail]
+    return [...head, `      width: 180,`, `      className: 'text-muted-foreground tabular-nums${nowrap}',`, `      render: (value) => formatDateTime(value),`, ...tail]
   }
   if (kind === 'int' || kind === 'float') {
-    return [...head, `      align: 'right',`, `      className: 'tabular-nums',`, ...tail]
+    return [...head, `      align: 'right',`, `      className: 'tabular-nums${nowrap}',`, ...tail]
   }
-  if (kind === 'text') return [...head, `      ellipsis: true,`, ...tail]
-  return [`    { key: ${q(field)}, title: ${q(toLabel(field))}, dataIndex: ${q(field)} },`]
+  // An ellipsis column takes only the width left over, so it needs a floor
+  if (kind === 'text') return [...head, `      minWidth: 160,`, `      ellipsis: true,`, ...tail]
+  if (kind === 'enum') {
+    // StatusBadge translates string children (the option label is the Chinese source text)
+    const dot = (s.meta[field]?.options ?? []).some((o) => o.tone) ? ' dot' : ''
+    return [
+      ...head,
+      `      render: (value) => {`,
+      `        const option = optionOf(${q(field)}, value)`,
+      `        return option ? (`,
+      `          <StatusBadge tone={option.tone ?? 'neutral'}${dot}>`,
+      `            {option.label}`,
+      `          </StatusBadge>`,
+      `        ) : (`,
+      `          value`,
+      `        )`,
+      `      },`,
+      ...tail,
+    ]
+  }
+  if (kind === 'dict') {
+    return [...head, `      className: 'whitespace-nowrap',`, `      render: (value) => dictLabel(dicts, ${q(s.meta[field]?.dict ?? '')}, value),`, ...tail]
+  }
+  if (kind === 'image') {
+    return [
+      ...head,
+      `      width: 80,`,
+      `      render: (value) =>`,
+      `        value ? <img src={fileUrl(value)} alt="" loading="lazy" className="bg-muted ring-border size-9 rounded-md object-cover ring-1" /> : null,`,
+      ...tail,
+    ]
+  }
+  if (kind === 'file') {
+    return [
+      ...head,
+      `      width: 90,`,
+      `      render: (value) =>`,
+      `        value ? (`,
+      `          <a href={fileUrl(value)} target="_blank" rel="noreferrer" className="text-primary hover:underline">`,
+      `            {t('查看')}`,
+      `          </a>`,
+      `        ) : null,`,
+      ...tail,
+    ]
+  }
+  if (nowrap) return [`    { key: ${q(field)}, title: ${q(label)}, dataIndex: ${q(field)}, className: 'whitespace-nowrap' },`]
+  return [`    { key: ${q(field)}, title: ${q(label)}, dataIndex: ${q(field)}, minWidth: 120 },`]
 }
 
 export function genFrontendPage(s: ScaffoldSpec): string {
   const fields = s.fields.map(([f, t]) => [f, frontendKind(t)] as const)
-  const columnFields = s.exportFields.map(([f, t]) => [f, frontendKind(t)] as const)
+  const columnFields = s.exportFields.map(([f, t]) => [f, frontendKind(t), t] as const)
   const kinds = new Set(fields.map(([, k]) => k))
-  const title = toLabel(s.name)
-  const k = s.kebab
+  const title = s.title
+  const enumFields = fields.filter(([, kind]) => kind === 'enum').map(([f]) => f)
+  const dictCodes = [...new Set(fields.filter(([, kind]) => kind === 'dict').map(([f]) => s.meta[f]?.dict ?? ''))]
+  const optionsRef = (f: string) => (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(f) ? `FIELD_OPTIONS.${f}` : `FIELD_OPTIONS[${q(f)}]`)
+  /** Form value a new record starts with: the field's default, or the kind's empty value */
+  const emptyOf = (f: string, kind: FrontendKind) => {
+    const type = s.fields.find(([name]) => name === f)?.[1] ?? 'str'
+    const fallback = defaultLiteral(type, s.meta[f]?.default)
+    if (fallback === null) return FRONTEND_FIELD_MAP[kind].empty
+    return fieldSpec(type).kind === 'decimal' ? String(Number(s.meta[f]?.default)) : fallback
+  }
+  /** FormValues type of a field: an enum with options holds one of their values */
+  const formTypeOf = (f: string, kind: FrontendKind) => {
+    const options = s.meta[f]?.options ?? []
+    return kind === 'enum' && options.length ? `${options.map((o) => q(o.value)).join(' | ')} | null` : FRONTEND_FIELD_MAP[kind].formType
+  }
 
   // Import only the components in use (apps/web's eslint enables no-unused-vars)
   const formComponents = [...new Set(fields.map(([, kind]) => FRONTEND_FIELD_MAP[kind].component))].sort()
   const formatImports = [...(kinds.has('date') ? ['formatDate'] : []), 'formatDateTime']
-  const needsStatusBadge = columnFields.some(([, kind]) => kind === 'bool')
+  const needsStatusBadge = columnFields.some(([, kind]) => kind === 'bool' || kind === 'enum')
+  const needsFileUrl = columnFields.some(([, kind]) => kind === 'file' || kind === 'image')
 
   const exportFields = [
     "  { label: 'ID', value: 'id' },",
-    ...s.exportFields.map(([f]) => `  { label: ${q(toLabel(f))}, value: ${q(f)} },`),
+    ...s.exportFields.map(([f]) => `  { label: ${q(labelOf(s, f))}, value: ${q(f)} },`),
     "  { label: '创建时间', value: 'created_at' },",
   ]
-  const emptyLines = fields.map(([f, kind]) => `  ${key(f)}: ${FRONTEND_FIELD_MAP[kind].empty},`)
+  const formTypeLines = fields.map(([f, kind]) => `  ${key(f)}: ${formTypeOf(f, kind)}`)
+  // Required fields without a default whose empty form value is null (numbers, options): the form's required rule
+  // keeps them filled on submit, but the create body types them non-null, so toBody() narrows them
+  const narrowed = fields
+    .filter(([f, kind]) => {
+      const type = s.fields.find(([name]) => name === f)?.[1] ?? 'str'
+      return s.meta[f]?.required && defaultLiteral(type, s.meta[f]?.default) === null && FRONTEND_FIELD_MAP[kind].formType.endsWith('| null')
+    })
+    .map(([f]) => f)
+  const toBodyBlock = narrowed.length
+    ? `
+/** The request body: the required rules keep ${narrowed.join(' / ')} filled on submit, which the form's types can't see */
+const toBody = ({ ${narrowed.map(key).join(', ')}, ...rest }: FormValues): ${s.pascal}Body | null =>
+  ${narrowed.map((f) => `${f} === null`).join(' || ')} ? null : { ...rest, ${narrowed.map(key).join(', ')} }
+`
+    : ''
+  const emptyLines = fields.map(([f, kind]) => `  ${key(f)}: ${emptyOf(f, kind)},`)
   const toFormLines = fields.map(([f, kind]) => `  ${key(f)}: ${formValueExpr(f, kind)},`)
   const formLines = fields.map(([f, kind]) => {
     const spec = FRONTEND_FIELD_MAP[kind]
-    return `        <${spec.component} control={form.control} name="${f}" label="${toLabel(f)}"${spec.props} />`
+    const meta = s.meta[f] ?? {}
+    const rules = meta.required ? ` rules={{ required: '此项必填' }}` : ''
+    const options =
+      kind === 'enum'
+        ? ` options={${optionsRef(f)}}${meta.required ? '' : ' clearable'}`
+        : kind === 'dict'
+          ? ` options={dicts[${q(meta.dict ?? '')}] ?? []}${meta.required ? '' : ' clearable'}`
+          : ''
+    return `        <${spec.component} control={form.control} name="${f}" label="${labelOf(s, f)}"${spec.props}${options}${rules} />`
   })
   const columns = [
     `    { key: 'id', title: 'ID', dataIndex: 'id', width: 72, className: 'text-muted-foreground tabular-nums' },`,
-    ...columnFields.flatMap(([f, kind]) => columnLines(f, kind)),
+    ...columnFields.flatMap(([f, kind, type]) => columnLines(s, f, kind, type)),
     `    {`,
     `      key: 'created_at',`,
     `      title: '创建时间',`,
@@ -998,6 +1500,7 @@ export function genFrontendPage(s: ScaffoldSpec): string {
     `    },`,
     `    {`,
     `      key: 'actions',`,
+    `      pin: 'end',`,
     `      title: '',`,
     `      align: 'right',`,
     `      width: 132,`,
@@ -1017,11 +1520,15 @@ export function genFrontendPage(s: ScaffoldSpec): string {
   ]
 
   return `/**
- * ${title} list page (generated by scripts/scaffold.ts; same structure as apps/web/src/modules/admin/pages/users/index.jsx)
+ * ${s.pascal} list page (generated by scripts/scaffold.ts; same structure as apps/web/src/modules/admin/pages/users/index.tsx)
  *
  * PageHeader -> FilterBar -> DataTable (pagination / selection / row actions) -> FormDialog (react-hook-form)
- * -> ImportDialog / ExportDialog. The title and field labels are English placeholders: replace them with Chinese
- * for the business and add required checks in rules.
+ * -> ImportDialog / ExportDialog. Without a --spec file the title and field labels are English placeholders: replace
+ * them with Chinese for the business and add required checks in rules.
+ *
+ * Types: Row is the record the API returns (ApiItem of the module's OpenAPI entry, see ./api); FormValues is what the
+ * form holds and submits, checked against the create / edit body. Change a field in the OpenAPI doc
+ * (docs/apifox-full.openapi.json, then \`pnpm openapi:generate\`) and tsc points at the page code to update.
  *
  * i18n: Chinese source text is the key. Strings passed to shared components (PageHeader, DataTable columns,
  * FormDialog, FormFields, ExportDialog, toast, ...) are translated inside them; text written in JSX, native
@@ -1044,52 +1551,82 @@ import {
   getItems,
   importItems,
   updateItem,
+  type ${s.pascal} as Row,${narrowed.length ? `\n  type ${s.pascal}Body,` : ''}
+  type ${s.pascal}ExportBody,
+  type ${s.pascal}FileType,
 } from '@/modules/${s.webModule}/api/${s.name}'
 import ConfirmAction from '@/shared/components/ConfirmAction'
-import DataTable from '@/shared/components/DataTable'
-import ExportDialog from '@/shared/components/data-transfer/ExportDialog'
+import DataTable, { type DataTableColumn } from '@/shared/components/DataTable'
+import ExportDialog, { type ExportFieldOption, type ExportParams } from '@/shared/components/data-transfer/ExportDialog'
 import ImportDialog from '@/shared/components/data-transfer/ImportDialog'
-import { FilterBar, SearchInput } from '@/shared/components/Filters'
+import { FilterBar${enumFields.length ? ', FilterSelect' : ''}, SearchInput } from '@/shared/components/Filters'
 import { FormDialog } from '@/shared/components/FormDialog'
 import { ${formComponents.join(', ')} } from '@/shared/components/FormFields'
 import PageHeader from '@/shared/components/PageHeader'
-${needsStatusBadge ? "import StatusBadge from '@/shared/components/StatusBadge'\n" : ''}import { useCrudList } from '@/shared/hooks/useCrudList'
-import { downloadBlobFile } from '@/shared/utils/file'
+${needsFileUrl ? "import { fileUrl } from '@/shared/api/files'\n" : ''}${needsStatusBadge ? `import StatusBadge${enumFields.length ? ', { type StatusTone }' : ''} from '@/shared/components/StatusBadge'\n` : ''}import { useCrudList } from '@/shared/hooks/useCrudList'
+${dictCodes.length ? "import { dictLabel, useDictOptions } from '@/shared/hooks/useDictOptions'\n" : ''}import { downloadBlobFile } from '@/shared/utils/file'
 
 const EXPORT_FIELDS = [
 ${exportFields.join('\n')}
-]
-const normalizeFileType = (raw) => (['csv', 'xlsx'].includes(raw) ? raw : 'xlsx')
+] as const satisfies readonly ExportFieldOption[]
+/** Export column names (the values the export body accepts) */
+type ExportField = (typeof EXPORT_FIELDS)[number]['value']
+const isExportField = (value: string): value is ExportField => EXPORT_FIELDS.some((o) => o.value === value)
+const normalizeFileType = (raw: string): ${s.pascal}FileType => (raw === 'csv' || raw === 'xlsx' ? raw : 'xlsx')
+${
+  enumFields.length
+    ? `
+/** Choices of the enum fields: the value is stored, the label is shown (as a badge of the given tone in the list) */
+const FIELD_OPTIONS: Record<${enumFields.map(q).join(' | ')}, { value: string; label: string; tone?: StatusTone }[]> = {
+${enumFields
+  .map(
+    (f) =>
+      `  ${key(f)}: [${(s.meta[f]?.options ?? [])
+        .map((o) => `{ value: ${q(o.value)}, label: ${q(o.label)}${o.tone ? `, tone: ${q(o.tone)}` : ''} }`)
+        .join(', ')}],`,
+  )
+  .join('\n')}
+}
+const optionOf = (field: keyof typeof FIELD_OPTIONS, value: string | null) => FIELD_OPTIONS[field].find((o) => o.value === value)
+/** List filters on the enum fields ('' = all) */
+const EMPTY_FILTERS: Record<keyof typeof FIELD_OPTIONS, string> = { ${enumFields.map((f) => `${key(f)}: ''`).join(', ')} }
+`
+    : ''
+}${dictCodes.length ? `\n/** Dictionaries used by dict fields (System → Configuration → Data dictionary) */\nconst DICT_CODES = [${dictCodes.map(q).join(', ')}]\n` : ''}
+/** What the form holds and submits (the create / edit body) */
+interface FormValues {
+${formTypeLines.join('\n')}
+}
 
-const EMPTY_VALUES = {
+const EMPTY_VALUES: FormValues = {
 ${emptyLines.join('\n')}
 }
 
 /** Edit: take only the form fields (id / created_at are not sent back); dates converted to the picker format */
-const toFormValues = (record) => ({
+const toFormValues = (record: Row): FormValues => ({
 ${toFormLines.join('\n')}
 })
-
+${toBodyBlock}
 export default function ${s.pascal}Page() {
   const { t } = useTranslation()
   const list = useCrudList(
     (params) =>
-      getItems(params).catch((err) => {
+      getItems(params).catch((err: unknown) => {
         toast.apiError(err, '加载失败')
         return { items: [], total: 0 }
       }),
     { defaultPerPage: 20 },
   )
   const { data, total, loading, page, perPage, filters, fetchData, handlePageChange } = list
-  const [search, setSearch] = useState('')
-  const [selectedKeys, setSelectedKeys] = useState([])
-  const [editing, setEditing] = useState(null)
+  const [search, setSearch] = useState('')${enumFields.length ? `\n  const [filterValues, setFilterValues] = useState(EMPTY_FILTERS)` : ''}
+  const [selectedKeys, setSelectedKeys] = useState<number[]>([])
+  const [editing, setEditing] = useState<Row | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
 
-  const form = useForm({ defaultValues: EMPTY_VALUES })
-
+  const form = useForm<FormValues>({ defaultValues: EMPTY_VALUES })
+${dictCodes.length ? '  const dicts = useDictOptions(DICT_CODES)\n' : ''}
   useEffect(() => {
     fetchData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1101,19 +1638,19 @@ export default function ${s.pascal}Page() {
     setFormOpen(true)
   }
 
-  const openEdit = (record) => {
+  const openEdit = (record: Row) => {
     setEditing(record)
     form.reset(toFormValues(record))
     setFormOpen(true)
   }
 
-  const submit = async (values) => {
+  const submit = async (values: FormValues) => {${narrowed.length ? `\n    const body = toBody(values)\n    if (!body) return` : ''}
     try {
       if (editing) {
-        await updateItem(editing.id, values)
+        await updateItem(editing.id, ${narrowed.length ? 'body' : 'values'})
         toast.success('更新成功')
       } else {
-        await createItem(values)
+        await createItem(${narrowed.length ? 'body' : 'values'})
         toast.success('创建成功')
       }
       setFormOpen(false)
@@ -1124,7 +1661,7 @@ export default function ${s.pascal}Page() {
     }
   }
 
-  const remove = async (record) => {
+  const remove = async (record: Row) => {
     try {
       await deleteItem(record.id)
       toast.success('删除成功')
@@ -1138,21 +1675,21 @@ export default function ${s.pascal}Page() {
 
   const runSearch = () => {
     setSelectedKeys([])
-    list.handleSearch({ search: search.trim() })
+    list.handleSearch({ search: search.trim()${enumFields.length ? ', ...filterValues' : ''} })
   }
   const reset = () => {
-    setSearch('')
+    setSearch('')${enumFields.length ? '\n    setFilterValues(EMPTY_FILTERS)' : ''}
     setSelectedKeys([])
     list.handleReset()
   }
 
-  const handleExport = async ({ fields, fileType }) => {
+  const handleExport = async ({ fields, fileType }: ExportParams) => {
     const type = normalizeFileType(fileType)
-    const payload = { fields, file_type: type }
+    const payload: ${s.pascal}ExportBody = { fields: fields.filter(isExportField), file_type: type }
     if (selectedKeys.length) payload.ids = selectedKeys
     try {
       const blob = await exportItems(payload)
-      downloadBlobFile(blob, \`${k}s_export.\${type}\`)
+      downloadBlobFile(blob, \`${s.table}_export.\${type}\`)
       toast.success('导出成功')
       setExportOpen(false)
     } catch (err) {
@@ -1160,7 +1697,7 @@ export default function ${s.pascal}Page() {
     }
   }
 
-  const columns = [
+  const columns: DataTableColumn<Row>[] = [
 ${columns.join('\n')}
   ]
 
@@ -1180,14 +1717,19 @@ ${columns.join('\n')}
             </Button>
             <Button size="sm" variant="brand" onClick={openCreate}>
               <Plus />
-              {t('新增')}
+              {t('新建')}
             </Button>
           </>
         }
       />
 
       <FilterBar onSearch={runSearch} onReset={reset}>
-        <SearchInput value={search} onChange={setSearch} onSubmit={runSearch} placeholder="搜索…" />
+        <SearchInput value={search} onChange={setSearch} onSubmit={runSearch} placeholder="搜索…" />${enumFields
+          .map(
+            (f) =>
+              `\n        <FilterSelect value={filterValues.${f}} onChange={(value) => setFilterValues((prev) => ({ ...prev, ${key(f)}: value }))} options={${optionsRef(f)}} placeholder="${labelOf(s, f)}"${allLabelAttr(s, f)} />`,
+          )
+          .join('')}
       </FilterBar>
 
       <AnimatePresence>
@@ -1223,14 +1765,21 @@ ${columns.join('\n')}
         selectedKeys={selectedKeys}
         onSelectionChange={setSelectedKeys}
         pagination={{ page, perPage, total, onChange: handlePageChange }}
-        emptyTitle="暂无数据"
-        emptyDescription={filters.search ? '换个关键词试试' : '点击右上角「新增」添加第一条数据'}
+        emptyTitle="还没有记录"
+        emptyAction={
+          <Button size="sm" onClick={openCreate}>
+            <Plus />
+            {t('新建')}
+          </Button>
+        }
+        filtered={Boolean(filters.search${enumFields.map((f) => ` || filters.${f}`).join('')})}
+        onClearFilters={reset}
       />
 
       <FormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
-        title={editing ? '编辑' : '新增'}
+        title={editing ? '编辑' : '新建'}
         form={form}
         onSubmit={submit}
       >
@@ -1258,17 +1807,17 @@ ${formLines.join('\n')}
         onDownloadTemplate={(fileType) =>
           downloadTemplate(normalizeFileType(fileType))
             .then((blob) => {
-              downloadBlobFile(blob, \`${k}s_import_template.\${normalizeFileType(fileType)}\`)
+              downloadBlobFile(blob, \`${s.table}_import_template.\${normalizeFileType(fileType)}\`)
               toast.success('模板已下载')
             })
-            .catch((err) => toast.apiError(err, '模板下载失败'))
+            .catch((err: unknown) => toast.apiError(err, '模板下载失败'))
         }
         onImport={(file) => importItems(file)}
         onImported={(res) => {
           toast.success(t('导入成功：新增 {{created}} 条，更新 {{updated}} 条', { created: res?.created || 0, updated: res?.updated || 0 }))
           fetchData()
         }}
-        errorExportFileName="${k}s_import_errors.csv"
+        errorExportFileName="${s.table}_import_errors.csv"
       />
     </div>
   )
@@ -1289,19 +1838,142 @@ export function pageTexts(code: string): string[] {
   return [...texts].sort()
 }
 
+/** Webhook events every generated module emits (service → routes' declareEvents) */
+const EVENT_ACTIONS = ['created', 'updated', 'deleted'] as const
+type EventAction = (typeof EVENT_ACTIONS)[number]
+const EVENT_VERBS: Record<EventAction, { 'zh-CN': string; 'en-US': string; 'ja-JP': string }> = {
+  created: { 'zh-CN': '已新增', 'en-US': 'created', 'ja-JP': 'が追加された' },
+  updated: { 'zh-CN': '已修改', 'en-US': 'updated', 'ja-JP': 'が変更された' },
+  deleted: { 'zh-CN': '已删除', 'en-US': 'deleted', 'ja-JP': 'が削除された' },
+}
+
+/** Description of a module event on the webhooks page: the module title followed by the action (created / updated / deleted) */
+export function eventLabel(s: ScaffoldSpec, action: EventAction): string {
+  const cjk = /[\u3400-\u9fff]$/.test(s.title)
+  return `${s.title}${cjk ? '' : ' '}${EVENT_VERBS[action]['zh-CN']}`
+}
+
+/**
+ * The event descriptions with their translations; the webhooks page shows them through t(), and every locales file is
+ * one namespace, so they go into the module's own page locales
+ */
+function eventTexts(s: ScaffoldSpec): Record<string, Record<PageLang, string>> {
+  const title = (lang: PageLang) => s.i18n[lang]?.[s.title] || toLabel(s.name)
+  return Object.fromEntries(
+    EVENT_ACTIONS.map((action) => [
+      eventLabel(s, action),
+      { 'en-US': `${title('en-US')} ${EVENT_VERBS[action]['en-US']}`, 'ja-JP': `${title('ja-JP')}${EVENT_VERBS[action]['ja-JP']}` },
+    ]),
+  )
+}
+
+/** Key of the "all" item of a filter over a Chinese label: the label with the Chinese "all" prefix */
+const allLabelKey = (label: string) => `全部${label}`
+const hasChinese = (text: string) => /[\u4e00-\u9fff]/.test(text)
+
+/** allLabel attribute for a field's FilterSelect: only when the label is Chinese (an English label keeps the default) */
+function allLabelAttr(s: ScaffoldSpec, field: string): string {
+  const label = labelOf(s, field)
+  return hasChinese(label) ? ` allLabel="${allLabelKey(label)}"` : ''
+}
+
+/** English plural of a lowercase noun phrase, good enough for filter names (status → statuses, category → categories) */
+function pluralize(phrase: string): string {
+  if (/(s|x|z|ch|sh)$/.test(phrase)) return `${phrase}es`
+  if (/[^aeiou]y$/.test(phrase)) return `${phrase.slice(0, -1)}ies`
+  return `${phrase}s`
+}
+
+/** Translations of each enum filter's "all" item */
+function allLabelTexts(s: ScaffoldSpec): Record<string, Record<PageLang, string>> {
+  // The same fields the list page puts in its FilterBar
+  const enumFields = s.fields.filter(([, t]) => frontendKind(t) === 'enum').map(([f]) => f)
+  const fallback = specFallbackTexts(s)
+  return Object.fromEntries(
+    enumFields
+      .map((f) => labelOf(s, f))
+      .filter(hasChinese)
+      .map((label) => {
+        const en = s.i18n['en-US']?.[label] ?? fallback[label] ?? label
+        const ja = s.i18n['ja-JP']?.[label] ?? fallback[label] ?? label
+        return [allLabelKey(label), { 'en-US': `All ${pluralize(en.charAt(0).toLowerCase() + en.slice(1))}`, 'ja-JP': `すべての${ja}` }]
+      }),
+  )
+}
+
 /**
  * Page locales: translations of the page's fixed Chinese strings that the shared catalogs (apps/web/src/locales) lack.
  * Both languages get the same keys (a string missing in either shared catalog goes into both page files).
  * Returns null when the shared catalogs already cover everything.
  */
 export function genFrontendLocales(s: ScaffoldSpec, shared: Catalogs = {}): Record<PageLang, Record<string, string>> | null {
-  const missing = pageTexts(genFrontendPage(s)).filter((text) => PAGE_LANGS.some((lang) => !shared[lang]?.[text]))
+  const events = { ...eventTexts(s), ...allLabelTexts(s) }
+  const texts = [...pageTexts(genFrontendPage(s)), ...Object.keys(events)]
+  const missing = texts.filter((text) => PAGE_LANGS.some((lang) => !shared[lang]?.[text]))
   if (missing.length === 0) return null
-  const unknown = missing.filter((text) => !PAGE_TEXTS[text])
+  const fallback = specFallbackTexts(s)
+  const translate = (text: string, lang: PageLang) => PAGE_TEXTS[text]?.[lang] ?? events[text]?.[lang] ?? s.i18n[lang]?.[text] ?? fallback[text]
+  const unknown = missing.filter((text) => PAGE_LANGS.some((lang) => !translate(text, lang)))
   if (unknown.length > 0) throw new Error(`PAGE_TEXTS has no translation for: ${unknown.join(', ')}`)
   return Object.fromEntries(
-    PAGE_LANGS.map((lang) => [lang, Object.fromEntries(missing.map((text) => [text, PAGE_TEXTS[text]![lang]]))]),
+    PAGE_LANGS.map((lang) => [lang, Object.fromEntries(missing.map((text) => [text, translate(text, lang)!]))]),
   ) as Record<PageLang, Record<string, string>>
+}
+
+/** Spec translations that lose to an existing translation of the same text: [lang, text, spec's, existing] */
+export function overriddenTranslations(s: ScaffoldSpec, catalogs: Catalogs): Array<[PageLang, string, string, string]> {
+  return PAGE_LANGS.flatMap((lang) =>
+    Object.entries(s.i18n[lang] ?? {}).flatMap(([text, spec]): Array<[PageLang, string, string, string]> => {
+      const existing = catalogs[lang]?.[text]
+      return existing !== undefined && existing !== spec ? [[lang, text, spec, existing]] : []
+    }),
+  )
+}
+
+/**
+ * Translations to use when a spec gives none: the English-ish name each Chinese text came from
+ * (title → module name, label → field name, option label → option value)
+ */
+function specFallbackTexts(s: ScaffoldSpec): Record<string, string> {
+  const out: Record<string, string> = { [s.title]: toLabel(s.name) }
+  for (const [f] of s.fields) {
+    const meta = s.meta[f] ?? {}
+    if (meta.label) out[meta.label] = toLabel(f)
+    for (const option of meta.options ?? []) out[option.label] = toLabel(option.value)
+  }
+  return out
+}
+
+/**
+ * Every page catalog of the target repo merged (apps/web/src/**\/locales/<lang>.json, menu names excluded): a text
+ * translated anywhere counts as translated, and re-translating it in the page would conflict with that file
+ */
+export function readAllCatalogs(root: string): Catalogs {
+  const catalogs: Catalogs = { 'en-US': {}, 'ja-JP': {} }
+  const walk = (dir: string) => {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules' && entry.name !== 'menus') walk(path)
+        continue
+      }
+      const lang = PAGE_LANGS.find((l) => entry.name === `${l}.json`)
+      if (!lang || !dir.endsWith(`${sep}locales`)) continue
+      try {
+        Object.assign(catalogs[lang]!, JSON.parse(readFileSync(path, 'utf8')) as Record<string, string>)
+      } catch {
+        // unreadable catalog: ignore
+      }
+    }
+  }
+  walk(join(root, 'apps', 'web', 'src'))
+  return catalogs
 }
 
 /** Shared catalogs of the target repo (a missing / unreadable file counts as empty) */
@@ -1352,7 +2024,7 @@ export function registerRoute(content: string, pascal: string, kebab: string): s
     if (/^\s*await\s+register\w+Routes\(\s*app\s*\)/.test(l)) lastCall = i
   })
   if (lastCall < 0) {
-    throw new Error('router.ts 中找不到 `await registerXxxRoutes(app)` 调用，无法自动注册，请手动添加')
+    throw new Error("No `await registerXxxRoutes(app)` call in router.ts, so the routes can't be registered automatically; add them by hand")
   }
   const indent = /^(\s*)/.exec(lines[lastCall]!)?.[1] ?? '  '
   lines.splice(lastCall + 1, 0, `${indent}await ${fn}(app)`)
@@ -1367,43 +2039,56 @@ export interface ScaffoldOptions {
   dryRun?: boolean
   skipMigration?: boolean
   log?: (line: string) => void
+  /** --data-scope */
+  dataScope?: boolean
+  /**
+   * Called before a file is written: `before` is null for a new file, the previous content for an updated one
+   * (lets a caller record the changes, e.g. to undo a module)
+   */
+  onChange?: (change: { path: string; before: string | null }) => void
 }
 
-function writeFile(root: string, path: string, content: string, dryRun: boolean, log: (l: string) => void): void {
-  const rel = relative(root, path)
-  if (dryRun) {
-    log(`  [dry-run] would write: ${rel}`)
+interface WriteContext {
+  root: string
+  dryRun: boolean
+  log: (line: string) => void
+  onChange?: ScaffoldOptions['onChange']
+}
+
+function writeFile(ctx: WriteContext, path: string, content: string): void {
+  const rel = relative(ctx.root, path)
+  if (ctx.dryRun) {
+    ctx.log(existsSync(path) ? `  [dry-run] would skip (already exists): ${rel}` : `  [dry-run] would write: ${rel}`)
     return
   }
   mkdirSync(dirname(path), { recursive: true })
   if (existsSync(path)) {
-    log(`  [skip] already exists: ${rel}`)
+    ctx.log(`  [skip] already exists: ${rel}`)
     return
   }
+  ctx.onChange?.({ path, before: null })
   writeFileSync(path, content, 'utf8')
-  log(`  [create] ${rel}`)
+  ctx.log(`  [create] ${rel}`)
 }
 
-function updateFile(
-  root: string,
-  path: string,
-  transform: (content: string) => string | null,
-  dryRun: boolean,
-  log: (l: string) => void,
-): void {
-  const rel = relative(root, path)
-  if (!existsSync(path)) throw new Error(`注册文件不存在：${rel}`)
-  if (dryRun) {
-    log(`  [dry-run] would update: ${rel}`)
-    return
-  }
-  const next = transform(readFileSync(path, 'utf8'))
+/** Rewrite a registration file; returns whether it changed (in a dry run: whether it would change; nothing is written) */
+function updateFile(ctx: WriteContext, path: string, transform: (content: string) => string | null): boolean {
+  const rel = relative(ctx.root, path)
+  if (!existsSync(path)) throw new Error(`Registration file not found: ${rel}`)
+  const before = readFileSync(path, 'utf8')
+  const next = transform(before)
   if (next === null) {
-    log(`  [skip] already registered: ${rel}`)
-    return
+    ctx.log(`  ${ctx.dryRun ? '[dry-run] would skip' : '[skip]'} already registered: ${rel}`)
+    return false
   }
+  if (ctx.dryRun) {
+    ctx.log(`  [dry-run] would update: ${rel}`)
+    return true
+  }
+  ctx.onChange?.({ path, before })
   writeFileSync(path, next, 'utf8')
-  log(`  [update] ${rel}`)
+  ctx.log(`  [update] ${rel}`)
+  return true
 }
 
 function sortKeys(obj: Record<string, string>): Record<string, string> {
@@ -1413,6 +2098,121 @@ function sortKeys(obj: Record<string, string>): Record<string, string> {
 function resolveDrizzleKit(apiDir: string): string[] {
   const local = join(apiDir, 'node_modules', '.bin', 'drizzle-kit')
   return existsSync(local) ? [local] : ['npx', 'drizzle-kit']
+}
+
+// ─── Spec files (--spec) ───────────────────────────────────────────────────────
+
+export const NAME_RE = /^[a-z][a-z0-9_]*$/
+export const RESERVED_FIELDS = new Set(['id', 'created_at', 'updated_at', 'dept_id', 'created_by'])
+/** Types a unique constraint makes sense for (and the generated tests can give distinct samples) */
+export const UNIQUE_TYPES = new Set(['str', 'str20', 'str50', 'str500', 'text', 'int', 'float'])
+
+/** Characters a title / label can't hold: they end up in JSX attributes and string literals of the generated page */
+export const UNSAFE_TEXT = /["'`\\{}<>\n\r]/
+
+/** Keys a spec may use (anything else is most likely a typo such as "requried", which would be ignored silently) */
+export const SPEC_KEYS = {
+  spec: ['$schema', 'name', 'domain', 'title', 'dataScope', 'fields', 'menu', 'i18n'],
+  field: ['name', 'type', 'label', 'required', 'unique', 'default', 'options', 'dict'],
+  option: ['value', 'label', 'tone'],
+  menu: ['parentId', 'icon'],
+  i18n: ['en-US', 'ja-JP'],
+} as const
+
+function unknownKeys(value: unknown, allowed: readonly string[]): string[] {
+  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).filter((k) => !allowed.includes(k)) : []
+}
+
+/** Problems in a --spec file (shown to the user); an empty list means it can be generated */
+export function validateSpec(spec: SpecFile): string[] {
+  const errors: string[] = []
+  if (!spec || typeof spec !== 'object') return ['The spec must be a JSON object']
+  for (const key of unknownKeys(spec, SPEC_KEYS.spec)) errors.push(`Unknown property ${key} (allowed: ${SPEC_KEYS.spec.slice(1).join(' / ')})`)
+  if (typeof spec.name !== 'string' || !NAME_RE.test(spec.name) || spec.name.length > 40) {
+    errors.push('The module name must be snake_case (a lowercase letter first, then lowercase letters, digits and underscores; up to 40 characters)')
+  }
+  if (spec.domain !== undefined && spec.domain !== 'admin' && spec.domain !== 'component_center') {
+    errors.push('domain must be admin or component_center')
+  }
+  if (spec.title === undefined) {
+    errors.push('Missing title: the Chinese name of the module (used for the page title, menu name and API docs), e.g. 设备台账')
+  } else if (typeof spec.title !== 'string' || spec.title.trim().length === 0 || spec.title.length > 50) {
+    errors.push('The title must be 1–50 characters')
+  } else if (UNSAFE_TEXT.test(spec.title)) {
+    errors.push("The title can't contain quotes, backslashes, braces, angle brackets or line breaks")
+  }
+  if (!Array.isArray(spec.fields) || spec.fields.length === 0) return [...errors, 'At least one field is required']
+  if (spec.fields.length > 50) errors.push('At most 50 fields are allowed')
+  const seen = new Set<string>()
+  for (const field of spec.fields) {
+    const name = typeof field?.name === 'string' ? field.name : ''
+    const at = name || '(unnamed)'
+    if (!NAME_RE.test(name) || name.length > 40) errors.push(`Field ${at}: the field name must be snake_case, up to 40 characters`)
+    else if (RESERVED_FIELDS.has(name)) errors.push(`Field ${at}: ${name} is a reserved field name`)
+    else if (seen.has(name)) errors.push(`Field ${at}: duplicate field name`)
+    seen.add(name)
+    if (!(field.type in FIELD_TYPE_MAP)) {
+      errors.push(`Field ${at}: unknown type ${String(field.type)}`)
+      continue
+    }
+    for (const key of unknownKeys(field, SPEC_KEYS.field)) errors.push(`Field ${at}: unknown property ${key} (allowed: ${SPEC_KEYS.field.join(' / ')})`)
+    if (field.label === undefined) errors.push(`Field ${at}: missing label (the Chinese name, used for table headers, forms and API docs)`)
+    else if (typeof field.label !== 'string' || field.label.trim().length === 0 || field.label.length > 50) errors.push(`Field ${at}: the label must be 1–50 characters`)
+    else if (typeof field.label === 'string' && UNSAFE_TEXT.test(field.label)) errors.push(`Field ${at}: the label can't contain quotes, backslashes, braces, angle brackets or line breaks`)
+    const kind = fieldSpec(field.type).kind
+    if (field.required && kind === 'fileId') errors.push(`Field ${at}: file / image fields can't be required`)
+    if (field.unique && !UNIQUE_TYPES.has(field.type)) errors.push(`Field ${at}: only text and number fields can be unique`)
+    if (field.type === 'enum') {
+      const options = Array.isArray(field.options) ? field.options : []
+      if (options.length === 0) errors.push(`Field ${at}: an enum field needs at least one option`)
+      const values = new Set<string>()
+      for (const option of options) {
+        for (const key of unknownKeys(option, SPEC_KEYS.option)) errors.push(`Field ${at}: unknown option property ${key} (allowed: value / label / tone)`)
+        if (option?.tone !== undefined && !(OPTION_TONES as readonly unknown[]).includes(option.tone)) {
+          errors.push(`Field ${at}: option tone must be one of ${OPTION_TONES.join(' / ')}`)
+        }
+        if (typeof option?.value !== 'string' || !/^[A-Za-z0-9_-]{1,50}$/.test(option.value)) {
+          errors.push(`Field ${at}: option values may contain only letters, digits, underscores and hyphens (up to 50 characters)`)
+        } else if (values.has(option.value)) errors.push(`Field ${at}: duplicate option value ${option.value}`)
+        else values.add(option.value)
+        if (typeof option?.label !== 'string' || option.label.trim().length === 0 || option.label.length > 50) {
+          errors.push(`Field ${at}: option labels must be 1–50 characters`)
+        } else if (UNSAFE_TEXT.test(option.label)) {
+          errors.push(`Field ${at}: option labels can't contain quotes, backslashes, braces, angle brackets or line breaks`)
+        }
+      }
+    }
+    if (field.type === 'dict' && (typeof field.dict !== 'string' || !/^[A-Za-z0-9_.-]{1,100}$/.test(field.dict))) {
+      errors.push(`Field ${at}: dict must be a data dictionary code`)
+    }
+    const fallback = field.default
+    if (fallback !== undefined && fallback !== null && fallback !== '') {
+      const text = String(fallback).trim()
+      const ok =
+        kind === 'int'
+          ? /^[+-]?\d+$/.test(text)
+          : kind === 'decimal'
+            ? /^[+-]?(\d+\.?\d*|\.\d+)$/.test(text)
+            : kind === 'bool'
+              ? ['true', 'false', '1', '0'].includes(text)
+              : kind === 'date'
+                ? /^\d{4}-\d{2}-\d{2}$/.test(text)
+                : kind === 'dateTime'
+                  ? /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(text)
+                  : kind === 'choice'
+                    ? (field.options ?? []).some((o) => o.value === text)
+                    : kind === 'text'
+                      ? text.length <= 100
+                      : false
+      if (!ok) errors.push(`Field ${at}: default value ${text} doesn't match the field type`)
+    }
+  }
+  if (spec.menu !== undefined && spec.menu !== null) {
+    for (const key of unknownKeys(spec.menu, SPEC_KEYS.menu)) errors.push(`Unknown menu property ${key} (allowed: parentId / icon)`)
+    if (spec.menu.parentId !== undefined && !Number.isInteger(spec.menu.parentId)) errors.push('menu.parentId must be an integer')
+  }
+  for (const key of unknownKeys(spec.i18n, SPEC_KEYS.i18n)) errors.push(`i18n supports only en-US / ja-JP, not ${key}`)
+  return errors
 }
 
 // ─── Main flow ─────────────────────────────────────────────────────────────────
@@ -1437,43 +2237,72 @@ export function scaffold(
   fieldsStr: string,
   options: ScaffoldOptions = {},
 ): number {
+  return generate(buildSpec(name, domain, parseFields(fieldsStr), { dataScope: options.dataScope }), options)
+}
+
+/** Generate from a --spec file (validated first); `spec.menu` also registers the menu in seed-rbac.ts */
+export function scaffoldFromSpec(spec: SpecFile, options: ScaffoldOptions = {}): number {
+  const log = options.log ?? ((l: string) => console.log(l))
+  const errors = validateSpec(spec)
+  if (errors.length > 0) {
+    for (const error of errors) log(`❌ ${error}`)
+    return 1
+  }
+  const meta: Record<string, FieldMeta> = {}
+  for (const field of spec.fields) {
+    const { name, type: _type, ...rest } = field
+    meta[name] = { ...rest, label: rest.label?.trim() || undefined }
+  }
+  const s = buildSpec(
+    spec.name,
+    spec.domain ?? 'admin',
+    spec.fields.map((f) => [f.name, f.type]),
+    { dataScope: spec.dataScope, title: spec.title?.trim(), meta, i18n: spec.i18n },
+  )
+  return generate(s, { ...options, dataScope: spec.dataScope }, spec.menu ?? undefined)
+}
+
+function generate(s: ScaffoldSpec, options: ScaffoldOptions, menu?: MenuSpec): number {
   const root = resolve(options.root ?? DEFAULT_ROOT)
   const dryRun = options.dryRun ?? false
   const log = options.log ?? ((l: string) => console.log(l))
-  const fields = parseFields(fieldsStr)
-  const s = buildSpec(name, domain, fields)
+  const ctx: WriteContext = { root, dryRun, log, onChange: options.onChange }
+  const { name, domain, fields } = s
 
   const apiDir = join(root, 'apps', 'api')
   const srcDir = join(apiDir, 'src')
   const moduleDir = join(srcDir, 'modules', s.domainDir, s.kebab)
   const feBase = join(root, 'apps', 'web', 'src', 'modules', s.webModule)
-  // admin domain: pages/<name>/index.jsx; component_center domain: pages/admin/<name>_page/index.jsx
-  const fePagePath =
-    domain === 'admin' ? join(feBase, 'pages', name, 'index.jsx') : join(feBase, 'pages', 'admin', `${name}_page`, 'index.jsx')
+  const fePagePath = join(feBase, 'pages', ...s.pageDir.split('/'), 'index.tsx')
 
   log(`\n🔧 Scaffolding: ${name} (domain=${domain})`)
-  log(`   Fields: [${fields.map(([f, t]) => `('${f}', '${t}')`).join(', ')}]`)
+  log(`   Fields: ${fields.map(([f, t]) => `${f}:${t}`).join(', ')}`)
   log(`   Perm prefix: ${s.permPrefix}`)
   log(`   Menu component: ${s.menuComponent}`)
   log(`   API: ${s.apiBase}`)
   log('')
 
   // Backend files
-  writeFile(root, join(srcDir, 'db', 'schema', s.domainDir, `${s.kebab}.ts`), genDbSchema(s), dryRun, log)
-  writeFile(root, join(moduleDir, 'schema.ts'), genModuleSchema(s), dryRun, log)
-  writeFile(root, join(moduleDir, 'repository.ts'), genRepository(s), dryRun, log)
-  writeFile(root, join(moduleDir, 'service.ts'), genService(s), dryRun, log)
-  writeFile(root, join(moduleDir, 'routes.ts'), genRoutes(s), dryRun, log)
-  writeFile(root, join(apiDir, 'test', testFilePath(s)), genApiTest(s), dryRun, log)
+  writeFile(ctx, join(srcDir, 'db', 'schema', s.domainDir, `${s.kebab}.ts`), genDbSchema(s))
+  writeFile(ctx, join(moduleDir, 'schema.ts'), genModuleSchema(s))
+  writeFile(ctx, join(moduleDir, 'repository.ts'), genRepository(s))
+  writeFile(ctx, join(moduleDir, 'service.ts'), genService(s))
+  writeFile(ctx, join(moduleDir, 'routes.ts'), genRoutes(s))
+  writeFile(ctx, join(apiDir, 'test', testFilePath(s)), genApiTest(s))
 
   // Frontend files
-  writeFile(root, join(feBase, 'api', `${name}.js`), genFrontendApi(s), dryRun, log)
-  writeFile(root, fePagePath, genFrontendPage(s), dryRun, log)
-  const locales = genFrontendLocales(s, readSharedCatalogs(root))
+  writeFile(ctx, join(feBase, 'api', `${name}.ts`), genFrontendApi(s))
+  writeFile(ctx, fePagePath, genFrontendPage(s))
+  const catalogs = readAllCatalogs(root)
+  const locales = genFrontendLocales(s, catalogs)
+  // One namespace: a text another locales file already translates keeps that translation, not the spec's
+  for (const [lang, text, spec, existing] of overriddenTranslations(s, catalogs)) {
+    log(`  [note] ${lang} "${text}" stays "${existing}" (already translated elsewhere); the spec's "${spec}" is not used`)
+  }
   if (locales) {
     for (const lang of PAGE_LANGS) {
       const json = `${JSON.stringify(sortKeys(locales[lang]), null, 2)}\n`
-      writeFile(root, join(dirname(fePagePath), 'locales', `${lang}.json`), json, dryRun, log)
+      writeFile(ctx, join(dirname(fePagePath), 'locales', `${lang}.json`), json)
     }
   } else {
     log('  [skip] page locales: every page string is translated in apps/web/src/locales')
@@ -1481,8 +2310,10 @@ export function scaffold(
 
   // Registration
   try {
-    updateFile(root, join(srcDir, 'db', 'schema', 'index.ts'), (c) => registerSchemaExport(c, s.domainDir, s.kebab), dryRun, log)
-    updateFile(root, join(srcDir, 'modules', s.domainDir, 'router.ts'), (c) => registerRoute(c, s.pascal, s.kebab), dryRun, log)
+    updateFile(ctx, join(srcDir, 'db', 'schema', 'index.ts'), (c) => registerSchemaExport(c, s.domainDir, s.kebab))
+    updateFile(ctx, join(srcDir, 'modules', s.domainDir, 'router.ts'), (c) => registerRoute(c, s.pascal, s.kebab))
+    if (menu) registerModuleMenu(ctx, s, menu)
+    if (registerOpenApi(ctx, s)) regenerateApiTypes(ctx)
   } catch (err) {
     log(`❌ ${err instanceof Error ? err.message : String(err)}`)
     return 1
@@ -1492,7 +2323,7 @@ export function scaffold(
   if (dryRun) {
     log(`  [dry-run] would run: drizzle-kit generate --name ${name}`)
   } else if (options.skipMigration) {
-    log('  [skip] migration（--skip-migration）')
+    log('  [skip] migration (--skip-migration)')
   } else {
     log(`  [run] drizzle-kit generate --name ${name}`)
     const [cmd, ...pre] = resolveDrizzleKit(apiDir)
@@ -1503,23 +2334,164 @@ export function scaffold(
       res.status === 0 ? output.split('\n').filter((l) => /\[✓\]|No schema changes|warn/i.test(l)) : output.split('\n')
     if (shown.length > 0) log(shown.map((l) => `      ${l.trim()}`).join('\n'))
     if (res.status !== 0) {
-      log(`❌ drizzle-kit generate 失败（exit ${res.status ?? res.error?.message}）`)
+      log(`❌ drizzle-kit generate failed (exit ${res.status ?? res.error?.message})`)
       return 1
     }
   }
 
   log('')
-  log('✅ 骨架文件生成完成！')
+  if (dryRun) {
+    log('✅ Dry run finished: nothing was written. Run the same command without --dry-run to generate.')
+    return 0
+  }
+  log('✅ Scaffold generated')
   log('')
-  log('后续手动步骤：')
-  log(`  1. 按业务补充字段校验、中文表头（modules/${s.domainDir}/${s.kebab}/schema.ts）与前端页面文案（页面专属译文写在页面目录 locales/）`)
-  log(`  2. 在 apps/api/scripts/seed-rbac.ts 中添加菜单（component: '${s.menuComponent}'）+ 按钮权限：`)
-  log(`     ${s.permPrefix} / ${s.permPrefix}_add / _edit / _delete / _export / _import`)
-  log('  3. 运行: pnpm seed:rbac -- --incremental')
-  log('  4. 审查 apps/api/drizzle/ 下新生成的迁移 SQL，运行: pnpm db:migrate')
-  log(`  5. 运行: psql -d <db> -c '\\d ${s.table}' 确认表已落库`)
-  log(`  6. 按业务规则更新 apps/api/test/${testFilePath(s)}（生成的基础用例），补上必填 / 唯一等失败用例`)
-  log(`  7. 运行: pnpm verify -- --module ${name}`)
+  log('Next steps:')
+  if (menu) {
+    log('  1. Run: pnpm seed:rbac -- --incremental (the menu is already in scripts/seed-rbac.ts)')
+  } else {
+    log(`  1. Fill in field validation and Chinese headers (modules/${s.domainDir}/${s.kebab}/schema.ts) and the page copy (page-specific translations go in the page's locales/)`)
+    log(`  2. Add the menu (component: '${s.menuComponent}') and button permissions to apps/api/scripts/seed-rbac.ts:`)
+    log(`     ${s.permPrefix} / ${s.permPrefix}_add / _edit / _delete / _export / _import`)
+    log('     and their English / Japanese names, keyed by code, to apps/web/src/locales/menus/{en-US,ja-JP}.json')
+    log('  3. Run: pnpm seed:rbac -- --incremental')
+  }
+  log('  · Review the new migration SQL in apps/api/drizzle/, then run: pnpm db:migrate')
+  log(`  · Run: psql -d <database> -c '\\d ${s.table}' to confirm the table exists (the database of DEV_DATABASE_URL in apps/api/.env.development; castor_kit when unset)`)
+  log(`  · Update apps/api/test/${testFilePath(s)} (the generated basic tests) for the business rules`)
+  log('  · The API docs are in docs/apifox-full.openapi.json; if you change the generated routes, fields or validation, update them and run: pnpm openapi:generate -- --strict')
+  log(`  · Run: pnpm verify -- --module ${name}`)
+  return 0
+}
+
+/**
+ * Write the module's OpenAPI entries into docs/apifox-full.openapi.json (scripts/lib/scaffold-openapi.ts), so the new
+ * routes pass the document check right away; skipped when the document isn't there. Returns whether the doc changed.
+ */
+function registerOpenApi(ctx: WriteContext, s: ScaffoldSpec): boolean {
+  const docPath = join(ctx.root, 'docs', 'apifox-full.openapi.json')
+  if (!existsSync(docPath)) {
+    ctx.log('  [skip] docs/apifox-full.openapi.json not found; no API docs written')
+    return false
+  }
+  return updateFile(ctx, docPath, (content) => {
+    const next = applyScaffoldOpenApi(content, s, (field) => labelOf(s, field))
+    return next === content ? null : next
+  })
+}
+
+/**
+ * Regenerate the frontend's API types (apps/web/src/shared/api/openapi.d.ts) from the doc just written, so the
+ * generated API file's ApiItem<'/api/admin/<name>s'> resolves. Runs this repository's apps/web/scripts/api-types.mjs
+ * with --root, like `pnpm openapi:generate` does; skipped when the target has no apps/web.
+ */
+function regenerateApiTypes(ctx: WriteContext): void {
+  const out = join(ctx.root, 'apps', 'web', 'src', 'shared', 'api', 'openapi.d.ts')
+  const rel = relative(ctx.root, out)
+  if (!existsSync(join(ctx.root, 'apps', 'web'))) {
+    ctx.log(`  [skip] apps/web not found; ${rel} not regenerated`)
+    return
+  }
+  if (ctx.dryRun) {
+    ctx.log(`  [dry-run] would update: ${rel}`)
+    return
+  }
+  // realpath: the script runs as a CLI only when argv[1] is its own resolved path (macOS tmpdir is a symlink)
+  const script = realpathSync(join(DEFAULT_ROOT, 'apps', 'web', 'scripts', 'api-types.mjs'))
+  const before = existsSync(out) ? readFileSync(out, 'utf8') : null
+  ctx.onChange?.({ path: out, before })
+  const res = spawnSync(process.execPath, [script, '--root', ctx.root], { encoding: 'utf8' })
+  if (res.status !== 0) {
+    throw new Error(`Regenerating ${rel} failed (run pnpm openapi:generate):\n${`${res.stdout ?? ''}${res.stderr ?? ''}`.trim()}`)
+  }
+  ctx.log(`  [update] ${rel}`)
+}
+
+/** The module's menu as scripts/lib/menus.ts plans it */
+function menuRequest(s: ScaffoldSpec, menu: MenuSpec): MenuRequest {
+  return {
+    title: s.title,
+    titles: { 'en-US': s.i18n['en-US']?.[s.title] || toLabel(s.name), 'ja-JP': s.i18n['ja-JP']?.[s.title] || toLabel(s.name) },
+    permPrefix: s.permPrefix,
+    component: s.menuComponent,
+    // Gallery paths are /component-center/<group>/<page-kebab>, like the sibling pages
+    path: s.domain === 'admin' ? `/biz/${s.kebab}s` : `/component-center/patterns/${s.kebab}`,
+    icon: menu.icon,
+    parentId: menu.parentId,
+    placement: s.domain === 'admin' ? ADMIN_PLACEMENT : GALLERY_PLACEMENT,
+  }
+}
+
+/** "<title> (ID 1001, /biz/devices, buttons 10011–10015)", plus the business directory when it is created too */
+function describeMenus(entries: MenuEntry[], permPrefix: string): string {
+  const module = entries.find((e) => e.code === permPrefix)
+  const group = entries.find((e) => e.code !== permPrefix && e.menu_type === 'menu')
+  const text = module ? `${module.name} (ID ${module.id}, ${module.path}, buttons ${module.id * 10 + 1}–${module.id * 10 + 5})` : '-'
+  return group ? `${text}, in the new ${group.name} directory (ID ${group.id})` : text
+}
+
+/** Append the module's menu + button permissions to seed-rbac.ts and its names to the menu locales */
+function registerModuleMenu(ctx: WriteContext, s: ScaffoldSpec, menu: MenuSpec): void {
+  const request = menuRequest(s, menu)
+  const seedPath = join(ctx.root, 'apps', 'api', 'scripts', 'seed-rbac.ts')
+  let entries: MenuEntry[] | null = null
+  updateFile(ctx, seedPath, (content) => {
+    entries = planMenus(content, request)
+    return entries ? insertMenus(content, entries, `${s.pascal} (generated by scripts/scaffold.ts)`) : null
+  })
+  const planned = entries as MenuEntry[] | null
+  if (!planned) return
+  for (const lang of PAGE_LANGS) {
+    const localePath = join(ctx.root, 'apps', 'web', 'src', 'locales', 'menus', `${lang}.json`)
+    updateFile(ctx, localePath, (content) => {
+      const names = { ...(JSON.parse(content) as Record<string, string>), ...menuNames(planned, request, lang) }
+      return `${JSON.stringify(names, null, 2)}\n`
+    })
+  }
+  ctx.log(`  ${ctx.dryRun ? '[dry-run] would add menu' : '[menu]'} ${describeMenus(planned, s.permPrefix)}`)
+}
+
+/** "1 field" / "8 fields" */
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
+/**
+ * --validate-only: check a spec without generating anything; on success print what would be generated
+ * (so an agent can confirm the plan before writing files)
+ */
+export function validateOnly(spec: SpecFile, log: (line: string) => void = (l) => console.log(l), root: string = DEFAULT_ROOT): number {
+  const errors = validateSpec(spec)
+  if (errors.length > 0) {
+    for (const error of errors) log(`❌ ${error}`)
+    log(`\n${plural(errors.length, 'problem')}; field types and format: docs/spec.schema.json and docs/examples/specs/`)
+    return 1
+  }
+  const s = buildSpec(spec.name, spec.domain ?? 'admin', spec.fields.map((f) => [f.name, f.type]), { title: spec.title, dataScope: spec.dataScope })
+  log(`✅ Spec is valid: ${spec.name} (${s.title}), ${plural(spec.fields.length, 'field')}${spec.dataScope ? ', isolated by data scope' : ''}`)
+  log(`   API: ${s.apiBase} (list / create / detail / update / delete / export / import template / import)`)
+  log(`   Permissions: ${s.permPrefix} / _add / _edit / _delete / _export / _import`)
+  log(`   Table: ${s.table}; search field: ${s.nameField}`)
+  if (!spec.menu) {
+    log('   Menu: none (add "menu": {} to get one)')
+    return 0
+  }
+  // Plan against the current seed-rbac.ts, so the preview can name the menu's place and ids
+  let seed: string | null = null
+  try {
+    seed = readFileSync(join(root, 'apps', 'api', 'scripts', 'seed-rbac.ts'), 'utf8')
+  } catch {
+    // no seed-rbac.ts to plan against: describe it without ids
+  }
+  const planned = seed === null ? null : planMenus(seed, menuRequest(s, spec.menu))
+  if (planned) log(`   Menu: ${describeMenus(planned, s.permPrefix)}; written to scripts/seed-rbac.ts`)
+  else if (seed !== null) log(`   Menu: ${s.permPrefix} is already in scripts/seed-rbac.ts; nothing to add`)
+  else {
+    const where = spec.menu.parentId
+      ? `under parent menu ${spec.menu.parentId}`
+      : s.domain === 'admin'
+        ? 'in the 业务管理 (Business) directory'
+        : 'in the 页面模板 (Page patterns) directory'
+    log(`   Menu: written to scripts/seed-rbac.ts (${where})`)
+  }
   return 0
 }
 
@@ -1530,8 +2502,12 @@ export function main(argv: string[] = process.argv.slice(2)): number {
       name: { type: 'string' },
       domain: { type: 'string', default: 'admin' },
       fields: { type: 'string', default: 'name:str' },
+      spec: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       'skip-migration': { type: 'boolean', default: false },
+      'data-scope': { type: 'boolean', default: false },
+      'validate-only': { type: 'boolean', default: false },
+      'write-schema': { type: 'boolean', default: false },
       root: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -1541,24 +2517,45 @@ export function main(argv: string[] = process.argv.slice(2)): number {
     printUsage(import.meta.url)
     return 0
   }
+  // Paths on the command line are relative to where the user ran `pnpm scaffold` (pnpm runs this script in apps/api)
+  const callerDir = process.env.INIT_CWD ?? process.cwd()
+  const root = values.root === undefined ? undefined : resolve(callerDir, values.root)
+  if (values['write-schema']) {
+    const path = join(root ?? DEFAULT_ROOT, 'docs', 'spec.schema.json')
+    writeFileSync(path, specSchemaText(), 'utf8')
+    console.log(`✅ Wrote ${relative(process.cwd(), path)}`)
+    return 0
+  }
+  const common = { root, dryRun: values['dry-run'], skipMigration: values['skip-migration'] }
+  if (values.spec) {
+    let spec: SpecFile
+    try {
+      spec = JSON.parse(readFileSync(resolve(callerDir, values.spec), 'utf8')) as SpecFile
+    } catch (err) {
+      console.error(`❌ Can't read the spec file: ${err instanceof Error ? err.message : String(err)}`)
+      return 2
+    }
+    if (values['validate-only']) return validateOnly(spec)
+    return scaffoldFromSpec(spec, common)
+  }
+  if (values['validate-only']) {
+    console.error('❌ --validate-only needs --spec <file>')
+    return 2
+  }
   if (!values.name) {
-    console.error('❌ 缺少 --name（资源名，snake_case，如 customer）')
+    console.error('❌ Missing --name (resource name in snake_case, e.g. customer) or --spec <file>')
     return 2
   }
   if (values.domain !== 'admin' && values.domain !== 'component_center') {
-    console.error(`❌ --domain 只能是 admin 或 component_center（当前：${values.domain}）`)
+    console.error(`❌ --domain must be admin or component_center (got: ${values.domain})`)
     return 2
   }
   // Validate the name format
   if (!/^[a-z][a-z0-9_]*$/.test(values.name)) {
-    console.log('❌ --name 必须是 snake_case 格式（小写字母+下划线），如 customer_order')
+    console.log('❌ --name must be snake_case (lowercase letters, digits and underscores), e.g. customer_order')
     return 1
   }
-  return scaffold(values.name, values.domain, values.fields ?? 'name:str', {
-    root: values.root,
-    dryRun: values['dry-run'],
-    skipMigration: values['skip-migration'],
-  })
+  return scaffold(values.name, values.domain, values.fields ?? 'name:str', { ...common, dataScope: values['data-scope'] })
 }
 
 const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href

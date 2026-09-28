@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import type { GatewayService } from './service'
 import { GatewayError } from './schema'
-import { listLegacyAccounts } from './legacy-account-list'
-import { listLegacyRoutes } from './legacy-route-list'
-import { saveLegacyRoute, deleteLegacyRoute } from './legacy-route-write'
+import { listAccounts } from './account-list'
+import { listCandidateRoutes } from './candidate-route-list'
+import { saveCandidateRoute, deleteCandidateRoute } from './candidate-route-write'
 import { listAdminUsage } from './usage-admin'
 import { adminUsageAnalytics, personalUsageAnalytics } from './usage-analytics'
 import { listQuotas, updateQuota } from './quotas'
@@ -11,13 +11,13 @@ import { listQuotas, updateQuota } from './quotas'
 /** Management use cases. HTTP handlers keep authentication and response serialization. */
 export class GatewayAdminService {
   constructor(private readonly gateway: GatewayService) {}
-  accounts(query: unknown, owner?: number) { return listLegacyAccounts(this.gateway.repo, query, owner) }
+  accounts(query: unknown, owner?: number) { return listAccounts(this.gateway.repo, query, owner) }
   deleteAccount(id: number, owner?: number) { return this.gateway.repo.deleteAccount(id, owner) }
   copyAccount(id: number) { return this.gateway.repo.copyPlatformAccount(id) }
   deletePersonalChannel(owner: number, id: number) { return this.gateway.repo.deletePersonalChannel(owner, id) }
-  legacyRoutes(query: unknown) { return listLegacyRoutes(this.gateway.repo, query) }
-  saveLegacyRoute(body: unknown, id?: number) { return saveLegacyRoute(this.gateway.repo, body, this.gateway.options.allowPrivate, id) }
-  deleteLegacyRoute(id: number) { return deleteLegacyRoute(this.gateway.repo, id) }
+  candidateRoutes(query: unknown) { return listCandidateRoutes(this.gateway.repo, query) }
+  saveCandidateRoute(body: unknown, id?: number) { return saveCandidateRoute(this.gateway.repo, body, this.gateway.options.allowPrivate, id) }
+  deleteCandidateRoute(id: number) { return deleteCandidateRoute(this.gateway.repo, id) }
   publicRoutes() { return this.gateway.repo.publicRoutes() }
   deletePublicRoute(id: number) { return this.gateway.repo.deletePublicRoute(id) }
   routes() { return this.gateway.repo.routes() }

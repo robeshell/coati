@@ -100,7 +100,7 @@ export async function executeGateway(
         http_status: failure.status,
         error: failure.message,
         duration_ms: Date.now() - started,
-        expires_at: utcNowIso(new Date()) + 'Z',
+        expires_at: utcNowIso(new Date()),
       })
       .catch(gateway.report)
     throw failure
@@ -140,7 +140,7 @@ export async function executeGateway(
   const boundRoute = available.some(c => c.route.public_route && c.route.bound_upstream_id !== null)
   const personal = available.some(c => c.route.personal_owner !== undefined)
   const personalSession = personal ? explicitSession : undefined
-  // The ranking key matches Python; only its HMAC is stored in the database.
+  // The ranking key matches the routing contract; only its HMAC is stored in the database.
   const scope = gateway.options.sessionAffinityEnabled === false || personal || boundRoute || reference?.environment_fallback || reference?.capability ? undefined
     : sessionScope(key.owner_id, modelKey, body, headers, sessionSecret)
   const rankingKey = personalSession ? `personal:${key.owner_id}:${personalSession}:${body.model}`
@@ -177,7 +177,7 @@ export async function executeGateway(
   const primary = routes.find(c => c.route.public_route && c.route.bound_upstream_id === c.upstream.id)
   if (!personal) {
     const pool = preferredHealthy(routes.filter(c => c !== primary), policy)
-    // Python binds the primary explicitly, regardless of its soft health penalty.
+    // Gateway binds the primary explicitly, regardless of its soft health penalty.
     routes = primary ? [primary, ...pool] : pool
   }
   let bound = scope ? await gateway.repo.binding(scope) : undefined
@@ -281,7 +281,7 @@ export async function executeGateway(
     reserved_tokens: promptEstimate + outputLimit,
     request_context: context,
     expires_at:
-      utcNowIso(new Date(Date.now() + (gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)) + 'Z',
+      utcNowIso(new Date(Date.now() + (gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)),
   }, budget, executionPolicy.authorizationModel && executionPolicy.parentRequestId ?
     {model:executionPolicy.authorizationModel,parentRequestId:executionPolicy.parentRequestId} : undefined)
   outputLimit = budget.outputTokens
@@ -365,7 +365,7 @@ export async function executeGateway(
         selected.route.id,
         body.model,
         id,
-        utcNowIso(new Date(started + gateway.options.timeoutMs + 60000)) + 'Z',
+        utcNowIso(new Date(started + gateway.options.timeoutMs + 60000)),
         scope
           ? {
               scope,
@@ -508,7 +508,7 @@ export async function executeGateway(
           const canRetry = i < candidates.length - 1 && attemptCount < maxAttempts
           if (!route.environment_fallback) await gateway.repo.recordHealthFailure(
             upstream.id,
-            utcNowIso(new Date(attemptStart)) + 'Z',
+            utcNowIso(new Date(attemptStart)),
             redact(String(error), [secret, ...headerSecrets]),
             false,
             canRetry,
@@ -539,7 +539,7 @@ export async function executeGateway(
           await gateway.repo.invalidateBinding(scope, upstream.id)
         if (classification.retryable && !route.environment_fallback) await gateway.repo.recordHealthFailure(
             upstream.id,
-            utcNowIso(new Date(attemptStart)) + 'Z',
+            utcNowIso(new Date(attemptStart)),
             text,
             classification.immediate,
             !classification.immediate &&
@@ -638,7 +638,7 @@ export async function executeGateway(
             }
             if (!route.environment_fallback) await repo.recordHealthSuccess(
               upstream.id,
-              utcNowIso(new Date(attemptStart)) + 'Z',
+              utcNowIso(new Date(attemptStart)),
               upstream,
               Date.now() - attemptStart,
             )
@@ -762,7 +762,7 @@ export async function executeGateway(
         bridgeOptions,
       )
       if (upstreamProtocol !== protocol) {
-        // Python converters may synthesize zero counters. Wire accounting must
+        // Gateway converters may synthesize zero counters. Wire accounting must
         // use only the actual upstream usage, preserving absent vs reported zero.
         converted.usage = usageForProtocol(
           meter.rawUsage,
@@ -772,7 +772,7 @@ export async function executeGateway(
       }
       if (!route.environment_fallback) await gateway.repo.recordHealthSuccess(
         upstream.id,
-        utcNowIso(new Date(attemptStart)) + 'Z',
+        utcNowIso(new Date(attemptStart)),
         upstream,
         Date.now() - attemptStart,
       )

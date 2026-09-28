@@ -12,7 +12,7 @@ export function credentialMetadata(secret: string) {
   }
 }
 const stamp = (value: string | null) =>
-  value ? utcNowIso(new Date(value)) + 'Z' : null
+  value ? utcNowIso(new Date(value)) : null
 export function accountMetadata(row: UpstreamRow) {
   return {
     api_key_masked: row.api_key_hint || '****',

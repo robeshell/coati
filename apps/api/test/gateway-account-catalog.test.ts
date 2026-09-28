@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
@@ -22,7 +20,7 @@ import {
 } from './helpers'
 const fixture = JSON.parse(
   readFileSync(
-    new URL('./fixtures/python-account-catalog.json', import.meta.url),
+    new URL('./fixtures/account-catalog.json', import.meta.url),
     'utf8',
   ),
 )
@@ -51,16 +49,8 @@ afterAll(async () => {
   await db.pool.end()
 })
 
-test('catalog fixture pins the actual Python migration sources', () => {
-  for (const [path, hash] of Object.entries(fixture.sources)) {
-    expect(
-      createHash('sha256')
-        .update(readFileSync(resolve('../..', path)))
-        .digest('hex'),
-    ).toBe(hash)
-  }
-})
-test('catalog preserves Python provider status, empty model defaults and protocol capability metadata', () => {
+
+test('catalog preserves Gateway provider status, empty model defaults and protocol capability metadata', () => {
   expect(providerCatalog()).toEqual({ items: fixture.providers })
   expect(protocolCatalog()).toEqual({ items: fixture.protocols })
   expect(

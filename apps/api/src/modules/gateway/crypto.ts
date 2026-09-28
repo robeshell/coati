@@ -51,7 +51,7 @@ export class CredentialVault {
     const [version, iv, tag, ciphertext] = value.split('.')
     if (version !== 'v2' || !iv || !tag || !ciphertext)
       throw new Error(
-        'Unsupported credential format; legacy credentials require explicit migration',
+        'Unsupported credential encryption format',
       )
     for (const key of this.readKeys) {
       try {

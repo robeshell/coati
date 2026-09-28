@@ -6,7 +6,7 @@ import {
   fallback,
   truthy,
   text,
-  pythonJson,
+  wireJson,
 } from './compat-helpers'
 export const inputTextType = (role: unknown) =>
   role === 'assistant' ? 'output_text' : 'input_text'
@@ -49,7 +49,7 @@ export function responsesContent(content: unknown): {
   return { text: texts.join(''), images }
 }
 export const toolArguments = (value: unknown): string =>
-  typeof value === 'string' ? value : pythonJson(fallback(value, {}))
+  typeof value === 'string' ? value : wireJson(fallback(value, {}))
 export function declaredTools(body: Obj): unknown[] {
   const tools = [...array(body.tools)]
   for (const item of array(body.input))

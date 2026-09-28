@@ -1,19 +1,17 @@
 /**
  * Scheduled task routes
  *
- * Check order (preserves existing API behavior):
- * - GET/PUT/DELETE /scheduled-tasks/<id>: get_or_404 first, then the permission check
- * - POST /scheduled-tasks/<id>/run: permission check first, then get_or_404
+ * Routes with an id check permissions first (403), then load the record (404), so a caller without permission can't tell whether an id exists.
  * - Manual run: 200 when run.status is success, otherwise 500 (the body is still the full result)
  */
 
 import type { FastifyInstance } from 'fastify'
 import { hasMenuPermission, loginRequired } from '@/common/auth'
-import { intParam, jsonBody, parseIntParam, queryString } from '@/common/http'
+import { intParam, parseIntParam, queryString } from '@/common/http'
 import { parsePagination } from '@/common/pagination'
-import { pyStrip } from '@/common/scheduler/py-compat'
+import { parseIntText, parseYesNo, routeBody } from '@/common/validation'
 import { scheduledTaskToDict } from '@/db/schema'
-import { parseBool, parseIntValue } from './schema'
+import { taskBody } from './schema'
 import { ScheduledTaskService } from './service'
 
 export async function registerScheduledTaskRoutes(app: FastifyInstance): Promise<void> {
@@ -26,18 +24,18 @@ export async function registerScheduledTaskRoutes(app: FastifyInstance): Promise
       return reply.status(403).send({ error: '无权限查看定时任务列表' })
     }
     const { page, per_page } = parsePagination(request.query as Record<string, unknown>)
-    const search = pyStrip(queryString(request, 'search'))
-    const status = pyStrip(queryString(request, 'status'))
-    const rawActive = (request.query as Record<string, unknown>).is_active
-    const isActive = parseBool(Array.isArray(rawActive) ? rawActive[0] : rawActive, null)
+    const search = queryString(request, 'search').trim()
+    const status = queryString(request, 'status').trim()
+    const isActive = parseYesNo(queryString(request, 'is_active'))
     return service.listTasks(page, per_page, search, isActive, status)
   })
 
-  app.post('/api/admin/scheduled-tasks', opts, async (request, reply) => {
+  const taskInput = routeBody(taskBody, 'create')
+  app.post('/api/admin/scheduled-tasks', { ...opts, ...taskInput.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_scheduled_tasks_add'))) {
-      return reply.status(403).send({ error: '无权限新增定时任务' })
+      return reply.status(403).send({ error: '无权限新建定时任务' })
     }
-    return reply.status(201).send(await service.createTask(jsonBody(request)))
+    return reply.status(201).send(await service.createTask(taskInput.parse(request)))
   })
 
   // The static path /runs must be reachable: intParam only matches digits, so it doesn't conflict with /runs
@@ -46,35 +44,34 @@ export async function registerScheduledTaskRoutes(app: FastifyInstance): Promise
       return reply.status(403).send({ error: '无权限查看执行记录' })
     }
     const { page, per_page } = parsePagination(request.query as Record<string, unknown>)
-    const rawTaskId = (request.query as Record<string, unknown>).task_id
-    const taskIdText = Array.isArray(rawTaskId) ? rawTaskId[0] : rawTaskId
-    // parse_int(request.args.get('task_id'), default=0) or None
-    const taskId = (taskIdText === undefined ? 0 : parseIntValue(taskIdText, 0)) || null
-    const status = pyStrip(queryString(request, 'status'))
+    // One task's runs, or every task's when task_id is missing / not a number
+    const taskId = parseIntText(queryString(request, 'task_id'), 0) || null
+    const status = queryString(request, 'status').trim()
     return service.listRuns(page, per_page, taskId, status)
   })
 
   app.get(`/api/admin/scheduled-tasks/${intParam('task_id')}`, opts, async (request, reply) => {
-    const task = await service.getTaskOr404(taskIdOf(request.params))
     if (!(await hasMenuPermission(request, 'system_scheduled_tasks'))) {
       return reply.status(403).send({ error: '无权限查看定时任务' })
     }
+    const task = await service.getTaskOr404(taskIdOf(request.params))
     return scheduledTaskToDict(task)
   })
 
-  app.put(`/api/admin/scheduled-tasks/${intParam('task_id')}`, opts, async (request, reply) => {
-    const task = await service.getTaskOr404(taskIdOf(request.params))
+  const taskPatch = routeBody(taskBody, 'patch')
+  app.put(`/api/admin/scheduled-tasks/${intParam('task_id')}`, { ...opts, ...taskPatch.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_scheduled_tasks_edit'))) {
       return reply.status(403).send({ error: '无权限编辑定时任务' })
     }
-    return service.updateTask(task, jsonBody(request))
+    const task = await service.getTaskOr404(taskIdOf(request.params))
+    return service.updateTask(task, taskPatch.parse(request))
   })
 
   app.delete(`/api/admin/scheduled-tasks/${intParam('task_id')}`, opts, async (request, reply) => {
-    const task = await service.getTaskOr404(taskIdOf(request.params))
     if (!(await hasMenuPermission(request, 'system_scheduled_tasks_delete'))) {
       return reply.status(403).send({ error: '无权限删除定时任务' })
     }
+    const task = await service.getTaskOr404(taskIdOf(request.params))
     return service.deleteTask(task)
   })
 

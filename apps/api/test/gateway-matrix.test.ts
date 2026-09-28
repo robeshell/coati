@@ -925,7 +925,7 @@ test('capability filtering precedes the three-attempt limit', async () => {
   expect(result.statusCode, result.body).toBe(200)
   expect(observed.model).toBe('openai')
 })
-test('legacy Anthropic path uses the same cross-protocol handler', async () => {
+test('alternate Anthropic path uses the same cross-protocol handler', async () => {
   const token = await configure('openai')
   const result = await app.inject({
     method: 'POST',

@@ -88,7 +88,7 @@ export function normalizeServerToolHistory(body: Obj): Obj {
   return { ...body, messages }
 }
 
-/** Same local estimate shape as the Python count_tokens endpoint; never bills or calls a supplier. */
+/** Same local estimate shape as the Gateway count_tokens endpoint; never bills or calls a supplier. */
 export function estimateMessageTokens(body: Obj): number {
   const estimate: Obj = { messages: normalizeServerToolHistory(body).messages ?? null }
   const tools = Array.isArray(body.tools)
@@ -105,7 +105,7 @@ export function estimateMessageTokens(body: Obj): number {
   return Math.max(1, Math.ceil(Buffer.byteLength(JSON.stringify(estimate)) / 4))
 }
 
-/** Python reservation estimate includes only the payload fields it budgets. */
+/** Gateway reservation estimate includes only the payload fields it budgets. */
 export function estimateReservationTokens(body: Obj): number {
   const value: Obj = { messages: body.messages ?? null, tools: body.tools ?? null, response_format: body.response_format ?? null }
   for (const field of ['input', 'instructions', 'system']) if (body[field] != null) value[field] = body[field]

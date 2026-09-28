@@ -37,6 +37,7 @@ export class ReadonlyDb {
   private readonly timeoutMs: number
 
   constructor(connectionString: string, statementTimeoutMs: number, options: pg.PoolConfig = {}) {
+    if (!connectionString.trim()) throw new Error('AI_SQL_DATABASE_URL is required for AI SQL; the main database is never a production fallback')
     this.timeoutMs = Math.trunc(statementTimeoutMs)
     this.pool = new pg.Pool({
       connectionString,

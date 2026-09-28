@@ -1,14 +1,16 @@
 /**
  * Announcement management routes
  *
- * Note: unlike dicts/users, this **checks permission first (403 '无权限'), then get_or_404** (preserves existing API behavior).
+ * Routes with an id check permissions first (403), then load the record (404), so a caller without permission can't tell whether an id exists.
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { hasMenuPermission, loginRequired } from '@/common/auth'
-import { getUploadedFile, intParam, jsonBody, parseIntParam, queryString } from '@/common/http'
+import { getUploadedFile, intParam, parseIntParam, queryString } from '@/common/http'
 import { parsePagination } from '@/common/pagination'
 import { sendTable } from '@/common/tabular'
+import { routeBody } from '@/common/validation'
+import { announcementBody, announcementExportBody } from './schema'
 import { AnnouncementService } from './service'
 
 const FORBIDDEN = { error: '无权限' }
@@ -29,15 +31,17 @@ export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<
     })
   })
 
-  app.post('/api/admin/announcements', opts, async (request, reply) => {
+  const announcementInput = routeBody(announcementBody, 'create')
+  app.post('/api/admin/announcements', { ...opts, ...announcementInput.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_announcements_add'))) return reply.status(403).send(FORBIDDEN)
-    return reply.status(201).send(await service.createItem(jsonBody(request)))
+    return reply.status(201).send(await service.createItem(announcementInput.parse(request)))
   })
 
-  app.put(itemPath, opts, async (request, reply) => {
+  const announcementPatch = routeBody(announcementBody, 'patch')
+  app.put(itemPath, { ...opts, ...announcementPatch.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_announcements_edit'))) return reply.status(403).send(FORBIDDEN)
     const item = await service.getOr404(itemIdOf(request))
-    return service.updateItem(item, jsonBody(request))
+    return service.updateItem(item, announcementPatch.parse(request))
   })
 
   app.delete(itemPath, opts, async (request, reply) => {
@@ -58,9 +62,10 @@ export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<
     return service.unpublishItem(item)
   })
 
-  app.post('/api/admin/announcements/export', opts, async (request, reply) => {
+  const announcementExportInput = routeBody(announcementExportBody, 'create')
+  app.post('/api/admin/announcements/export', { ...opts, ...announcementExportInput.route }, async (request, reply) => {
     if (!(await hasMenuPermission(request, 'system_announcements_export'))) return reply.status(403).send(FORBIDDEN)
-    return sendTable(reply, await service.exportItems(jsonBody(request)))
+    return sendTable(reply, await service.exportItems(announcementExportInput.parse(request)))
   })
 
   app.get('/api/admin/announcements/template', opts, async (request, reply) => {

@@ -2,15 +2,12 @@
  * Notification service layer
  */
 
-import { ServiceError } from '@/common/errors'
-import { pyTruthy } from '@/common/py'
+import { writeError } from '@/common/db-errors'
+import { internalError, ServiceError } from '@/common/errors'
 import type { Db } from '@/db/client'
 import { notificationToDict } from '@/db/schema'
-import { bindInt, bindText, omitNull } from '@/common/sqla-bind'
 import { NotificationRepository } from './repository'
-import { normalizeNotiType, stripOrEmpty } from './schema'
-
-type Data = Record<string, unknown>
+import type { NotificationInput } from './schema'
 
 const PG_INT_MAX = 2_147_483_647
 
@@ -36,25 +33,26 @@ export class NotificationService {
     }
   }
 
-  async createItem(data: Data) {
-    const title = stripOrEmpty(data.title)
-    if (!title) throw new ServiceError('标题不能为空', 400)
-    const notiType = normalizeNotiType('noti_type' in data ? data.noti_type : 'info')
-    const isGlobal = pyTruthy('is_global' in data ? data.is_global : true)
-    const targetUserId = isGlobal ? null : data.user_id
+  async createItem(values: NotificationInput) {
+    const targetUserId = values.is_global ? null : values.user_id
+    // A notification for one user needs that user: without one nobody would ever see it
+    if (!values.is_global) {
+      if (targetUserId === null) throw new ServiceError('请选择接收通知的用户', 400)
+      if (!inIntRange(targetUserId) || !(await this.repo.userExists(targetUserId))) throw new ServiceError('接收通知的用户不存在', 400)
+    }
 
     try {
       const created = await this.repo.insert({
-        title,
-        content: omitNull(bindText(pyTruthy(data.content) ? data.content : '')),
-        noti_type: notiType,
-        link: omitNull(bindText(pyTruthy(data.link) ? data.link : null)),
-        is_global: isGlobal,
-        user_id: omitNull(bindInt(targetUserId)),
+        title: values.title,
+        content: values.content ?? '',
+        noti_type: values.noti_type,
+        link: values.link || null,
+        is_global: values.is_global,
+        user_id: targetUserId,
       })
       return notificationToDict(created, false)
-    } catch {
-      throw new ServiceError('创建通知失败，请稍后重试', 500)
+    } catch (err) {
+      throw writeError(err)
     }
   }
 
@@ -68,8 +66,8 @@ export class NotificationService {
     if (!(await this.repo.hasRead(userId, notiId))) {
       try {
         await this.repo.insertRead(userId, notiId)
-      } catch {
-        throw new ServiceError('操作失败，请稍后重试', 500)
+      } catch (err) {
+        throw internalError(err)
       }
     }
     return { success: true }
@@ -79,8 +77,8 @@ export class NotificationService {
     let marked: number
     try {
       marked = await this.db.transaction((tx) => new NotificationRepository(tx).markAllRead(userId))
-    } catch {
-      throw new ServiceError('操作失败，请稍后重试', 500)
+    } catch (err) {
+      throw internalError(err)
     }
     return { success: true, marked }
   }
@@ -91,8 +89,8 @@ export class NotificationService {
     if (notif.is_global && !canDeleteGlobal) throw new ServiceError('无权限删除全局通知', 403)
     try {
       await this.repo.delete(notif.id)
-    } catch {
-      throw new ServiceError('删除失败，请稍后重试', 500)
+    } catch (err) {
+      throw internalError(err)
     }
     return { success: true }
   }

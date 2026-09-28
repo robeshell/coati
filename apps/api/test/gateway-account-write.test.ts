@@ -62,9 +62,9 @@ const create = async (path = root, extra: Record<string, unknown> = {}) => {
     method: 'POST',
     url: path,
     payload: {
-      name: 'legacy-write-fixture',
+      name: 'alternate-write-fixture',
       base_url: base + '/v1',
-      api_key: 'legacy-secret-key',
+      api_key: 'alternate-secret-key',
       supported_models: ['fixture-model'],
       ...extra,
     },
@@ -90,8 +90,8 @@ test('account lifecycle preserves encrypted fields, copy resets observations, an
     upstream_protocol: 'openai-chat',
     health_probe: { ok: true, attempted: true },
   })
-  expect(response.body).not.toContain('legacy-secret-key')
-  expect(before.secret).not.toBe('legacy-secret-key')
+  expect(response.body).not.toContain('alternate-secret-key')
+  expect(before.secret).not.toBe('alternate-secret-key')
   const update = await admin.inject({
     method: 'PUT',
     url: `${root}/${id}`,
@@ -110,7 +110,7 @@ test('account lifecycle preserves encrypted fields, copy resets observations, an
   const copyId = copy.json().id
   ids.push(copyId)
   expect(copy.json()).toMatchObject({
-    name: 'legacy-write-fixture（复制）',
+    name: 'alternate-write-fixture（复制）',
     enabled: false,
     health_status: 'unknown',
     last_checked_at: null,
@@ -119,7 +119,7 @@ test('account lifecycle preserves encrypted fields, copy resets observations, an
   })
   expect((await row(copyId)).secret).toBe(before.secret)
   await db.db.execute(
-    sql`insert into gw_public_routes(model,upstream_id,enabled) values('legacy-write-ref',${id},false)`,
+    sql`insert into gw_public_routes(model,upstream_id,enabled) values('alternate-write-ref',${id},false)`,
   )
   expect(
     (await admin.inject({ method: 'DELETE', url: `${root}/${id}` })).statusCode,

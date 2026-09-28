@@ -104,7 +104,7 @@ export async function* bridgeStream(
     delete (clean as Obj).usage
     if (!truthy(delta)) return ''
     if (!target) return chatChunk(id, model, delta)
-    // The legacy target starts Anthropic streams with fabricated zero usage.
+    // The alternate target starts Anthropic streams with fabricated zero usage.
     // Only expose counters already reported by the source at this point.
     return target
       .feed(clean)

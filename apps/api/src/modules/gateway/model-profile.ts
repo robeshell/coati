@@ -15,7 +15,7 @@ const enabled = z.preprocess(
       : v,
   z.boolean(),
 )
-const input = z.object({
+export const profileInput = z.object({
   model_name: z.string().trim().min(1).max(128),
   context_window_override: nullableTokens,
   max_output_tokens_override: nullableTokens,
@@ -42,10 +42,10 @@ export function profileRecord(row: ProfileRow) {
           : row.catalog_source
             ? 'catalog'
             : 'fallback',
-    created_at: utcNowIso(new Date(row.created_at)) + 'Z',
-    updated_at: utcNowIso(new Date(row.updated_at)) + 'Z',
+    created_at: utcNowIso(new Date(row.created_at)),
+    updated_at: utcNowIso(new Date(row.updated_at)),
     catalog_synced_at: row.catalog_synced_at
-      ? utcNowIso(new Date(row.catalog_synced_at)) + 'Z'
+      ? utcNowIso(new Date(row.catalog_synced_at))
       : null,
   }
 }
@@ -71,8 +71,8 @@ export async function saveProfile(
 ) {
   const data = (
     id === undefined
-      ? input
-      : input
+      ? profileInput
+      : profileInput
           .partial()
           .refine(
             (values) => Object.keys(values).length > 0,

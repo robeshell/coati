@@ -6,7 +6,7 @@ import {
   truthy,
   fallback,
   text,
-  pythonJson,
+  wireJson,
   userId,
   schemaDefault,
   get,
@@ -75,7 +75,7 @@ export function chatToResponsesRequest(raw: unknown): Obj {
           type: 'function_call',
           call_id: call.id || '',
           name: fn.name || '',
-          arguments: typeof args === 'string' ? args : pythonJson(args),
+          arguments: typeof args === 'string' ? args : wireJson(args),
         })
       }
   }

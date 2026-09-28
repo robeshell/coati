@@ -6,7 +6,7 @@ import {
   truthy,
   fallback,
   text,
-  pythonJson,
+  wireJson,
   image,
   userId,
   get,
@@ -64,7 +64,7 @@ export function anthropicToResponsesRequest(raw: unknown): Obj {
           type: 'function_call',
           call_id: part.id || '',
           name: part.name || '',
-          arguments: pythonJson(fallback(part.input, {})),
+          arguments: wireJson(fallback(part.input, {})),
         })
       else if (part.type === 'tool_result')
         input.push({
@@ -142,7 +142,7 @@ export function anthropicToResponsesResponse(
         type: 'function_call',
         call_id: id,
         name: block.name || '',
-        arguments: pythonJson(fallback(block.input, {})),
+        arguments: wireJson(fallback(block.input, {})),
       })
     }
   }

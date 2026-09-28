@@ -2,17 +2,44 @@
  * Roles module schema layer
  */
 
+import { z } from 'zod'
+import { DATA_SCOPES, type DataScopeCode } from '@/common/data-scope'
 import { formatDateTime } from '@/common/serialize'
+import { exportBody, field } from '@/common/validation'
 import type { Menu, Role } from '@/db/schema'
 
-/** Export row: role + its menus in the order they were actually loaded */
-export type RoleExportItem = Role & { menus: Menu[] }
+export const roleBody = z.object({
+  name: field.requiredText('角色名称', '角色名称不能为空'),
+  code: field.requiredText('角色编码', '角色编码不能为空'),
+  description: field.text('描述'),
+  menu_ids: field.ids('菜单'),
+  data_scope: field.choice('数据范围', DATA_SCOPES, 'all', '数据范围取值不合法'),
+  dept_ids: field.ids('部门'),
+})
+
+export type RoleInput = z.output<typeof roleBody>
+
+export const roleExportBody = exportBody({ search: field.text('搜索') })
+
+/** Export row: role + its menus in the order they were actually loaded, + the codes of its custom-scope departments */
+export type RoleExportItem = Role & { menus: Menu[]; dept_codes?: string[] }
+
+/** Labels for roles.data_scope (export files) */
+export const DATA_SCOPE_LABELS: Record<DataScopeCode, string> = {
+  all: '全部数据',
+  dept_and_children: '本部门及下级',
+  dept: '本部门',
+  self: '仅本人',
+  custom: '自定义部门',
+}
 
 export const EXPORT_FIELD_MAP: Record<string, [string, (item: RoleExportItem) => unknown]> = {
   id: ['ID', (item) => item.id],
   name: ['角色名称', (item) => item.name],
   code: ['角色编码', (item) => item.code],
   description: ['描述', (item) => item.description || ''],
+  data_scope: ['数据范围', (item) => DATA_SCOPE_LABELS[item.data_scope as DataScopeCode] ?? item.data_scope],
+  dept_codes: ['部门编码', (item) => (item.dept_codes ?? []).join(',')],
   menu_codes: ['菜单编码', (item) => item.menus.map((m) => m.code).join(',')],
   menu_names: ['菜单名称', (item) => item.menus.map((m) => m.name).join(',')],
   created_at: ['创建时间', (item) => formatDateTime(item.created_at)],
@@ -22,11 +49,22 @@ export const IMPORT_HEADER_MAP: Record<string, string> = {
   角色名称: 'name',
   角色编码: 'code',
   描述: 'description',
+  数据范围: 'data_scope',
+  部门编码: 'dept_codes',
   菜单编码: 'menu_codes',
 }
 
-export const TEMPLATE_HEADERS = ['角色名称', '角色编码', '描述', '菜单编码']
-export const TEMPLATE_ROWS = [['示例角色', 'demo_role', '示例描述', 'dashboard,system_users']]
+/** Data scope cell on import: the code (e.g. dept) or its Chinese label from DATA_SCOPE_LABELS; '' = not given, null = invalid */
+export function parseDataScopeCell(raw: string | undefined): DataScopeCode | '' | null {
+  const text = (raw ?? '').trim()
+  if (!text) return ''
+  if (text in DATA_SCOPE_LABELS) return text as DataScopeCode
+  const hit = (Object.entries(DATA_SCOPE_LABELS) as [DataScopeCode, string][]).find(([, label]) => label === text)
+  return hit ? hit[0] : null
+}
+
+export const TEMPLATE_HEADERS = ['角色名称', '角色编码', '描述', '数据范围', '部门编码', '菜单编码']
+export const TEMPLATE_ROWS = [['示例角色', 'demo_role', '示例描述', '全部数据', '', 'dashboard,system_users']]
 
 export function parseCodes(raw: unknown): string[] {
   if (raw === null || raw === undefined) return []

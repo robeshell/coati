@@ -1,0 +1,26 @@
+/* Drag layout page: swap react-grid-layout's default red placeholder / black resize handle for theme colors (light and dark) */
+.drag-layout .react-grid-item.react-grid-placeholder {
+  background: var(--primary);
+  opacity: 0.12;
+  border-radius: 14px;
+  transition-duration: 150ms;
+}
+
+.drag-layout .react-grid-item > .react-resizable-handle {
+  background-image: none;
+}
+
+.drag-layout .react-grid-item > .react-resizable-handle::after {
+  right: 5px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted-foreground);
+  border-bottom: 2px solid var(--muted-foreground);
+  border-bottom-right-radius: 2px;
+}
+
+.drag-layout .react-grid-item.react-draggable-dragging,
+.drag-layout .react-grid-item.resizing {
+  z-index: 3;
+}

@@ -302,7 +302,7 @@ test('unconfigured extraction delegates to native fetch evidence with quota and 
 })
 
 
-test('direct search clamps Python integer limits and rejects malformed strings before outbound work', async () => {
+test('direct search clamps Gateway integer limits and rejects malformed strings before outbound work', async () => {
   for (const [value,expected] of [[99,8],[-1,1],[null,5],[' 3 ',3]] as const) {
     const response = await request({query:'fixture',max_results:value})
     expect(response.statusCode,response.body).toBe(200)

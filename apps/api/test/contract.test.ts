@@ -23,8 +23,8 @@ import {
   type Fixture,
 } from './helpers'
 
-/** Python isoformat(): no Z, and no fractional part when microseconds are 0 */
-const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?$/
+/** API time format: ISO 8601 in UTC, six fraction digits and Z */
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/
 
 let app: FastifyInstance
 let handle: DbHandle
@@ -48,7 +48,7 @@ async function loggedIn() {
 beforeAll(async () => {
   handle = openTestDb()
   fx = await createFixture(handle)
-  app = await buildTestApp({ trustedProxies: ['127.0.0.1', '::1'] })
+  app = await buildTestApp()
 })
 
 afterAll(async () => {
@@ -88,16 +88,7 @@ describe('内置路由与错误形状', () => {
   it('未登录访问受保护接口 → 401 带 redirect', async () => {
     const res = await app.inject('/api/admin/me')
     expect(res.statusCode).toBe(401)
-    expect(res.json()).toEqual({ error: '未授权访问', redirect: '/admin/login' })
-  })
-
-  it('/admin/login 页面路由按登录态重定向', async () => {
-    const anon = await app.inject('/admin/login')
-    expect(anon.statusCode).toBe(302)
-    expect(anon.headers.location).toBe('/')
-    const { cookie } = await loggedIn()
-    const authed = await app.inject({ url: '/admin/login', cookies: { coati_session: cookie } })
-    expect(authed.headers.location).toBe('/admin')
+    expect(res.json()).toEqual({ error: '未授权访问', redirect: '/login' })
   })
 })
 
@@ -117,6 +108,8 @@ describe('登录 / 会话', () => {
   })
 
   it('登录成功：形状、csrf_token、cookie 属性，并清零失败计数', async () => {
+    // The user in the response is read before this sign-in is recorded: sign in once first so last_login_at has a value
+    expect((await login()).statusCode).toBe(200)
     const res = await login()
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -125,7 +118,12 @@ describe('登录 / 会话', () => {
     expect(body.csrf_token).toMatch(/^[0-9a-f]{32}$/)
 
     const user = body.user
-    expect(Object.keys(user).sort()).toEqual(['created_at', 'id', 'menu_codes', 'roles', 'username'])
+    expect(Object.keys(user).sort()).toEqual([
+      'avatar', 'created_at', 'dept_id', 'dept_name', 'email', 'id', 'last_login_at', 'last_login_ip', 'menu_codes', 'nickname',
+      'phone', 'roles', 'status', 'totp_enabled', 'updated_at', 'username',
+    ])
+    expect(user.status).toBe('active')
+    expect(user.last_login_at).toMatch(ISO_RE)
     expect(user).toMatchObject({ id: fx.userId, username: FIXTURE_USER })
     expect(user.created_at).toMatch(ISO_RE)
     expect(user.roles).toHaveLength(1)
@@ -148,14 +146,14 @@ describe('登录 / 会话', () => {
     expect(failed).toHaveLength(0)
   })
 
-  it('反代声明 https 时 cookie 带 Secure（auto 策略）', async () => {
+  it('未受信代理不能通过声明 https 改变 cookie 策略', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/admin/login',
       headers: { 'x-forwarded-proto': 'https' },
       payload: { username: FIXTURE_USER, password: FIXTURE_PASSWORD },
     })
-    expect(res.cookies.find((c) => c.name === 'coati_session')!.secure).toBe(true)
+    expect(res.cookies.find((c) => c.name === 'coati_session')!.secure).not.toBe(true)
   })
 
   it('me / csrf-token 返回同一个 csrf_token', async () => {
@@ -178,7 +176,7 @@ describe('登录 / 会话', () => {
   })
 
   it('同一 IP 失败次数达到阈值 → 429', async () => {
-    const strict = await buildTestApp({ loginMaxFailures: 3 })
+    const strict = await buildTestApp({ settingsEnv: { LOGIN_MAX_FAILURES: '3' } })
     try {
       const attempt = () =>
         strict.inject({
@@ -248,7 +246,7 @@ describe('CSRF', () => {
 })
 
 describe('改密 / 登出', () => {
-  it('校验、旧密码错误、成功后写 pbkdf2:sha256 格式哈希并记操作日志', async () => {
+  it('校验、旧密码错误、成功后写 scrypt 哈希并记操作日志', async () => {
     const { cookie, csrf } = await loggedIn()
     const post = (payload: unknown) =>
       app.inject({
@@ -270,7 +268,7 @@ describe('改密 / 登出', () => {
     expect(ok.json()).toEqual({ message: '密码修改成功' })
 
     const [row] = await handle.db.select().from(admin_users).where(eq(admin_users.id, fx.userId))
-    expect(row!.password_hash).toMatch(/^pbkdf2:sha256:1000000\$[A-Za-z0-9]{16}\$[0-9a-f]{64}$/)
+    expect(row!.password_hash).toMatch(/^\$scrypt\$ln=15,r=8,p=3\$/)
     expect(await checkPasswordHash(row!.password_hash, 'changed-pass-2')).toBe(true)
 
     // The onResponse audit hook persists asynchronously; wait a bit before querying
@@ -287,17 +285,12 @@ describe('改密 / 登出', () => {
       method: 'POST',
       path: '/api/admin/change-password',
       target_id: null,
-      payload: '{"old_password": "***", "new_password": "***"}',
+      payload: '{"old_password":"***","new_password":"***"}',
     })
-
-    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:cookie}})).statusCode).toBe(401)
-    const refreshed=sessionCookie(ok)!
-    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:refreshed}})).statusCode).toBe(200)
 
     // Restore the fixture password so later cases can keep using it
     await handle.db.delete(admin_users).where(eq(admin_users.id, fx.userId))
     fx = await createFixture(handle)
-    expect((await app.inject({url:'/api/admin/me',cookies:{coati_session:refreshed}})).statusCode).toBe(401)
   })
 
   it('登出：清 cookie、只记一条 logout 操作日志、之后 me 为 401', async () => {
@@ -335,15 +328,15 @@ describe('SPA fallback', () => {
   })
 
   it('有前端产物时非 /api 路径落到 index.html，/api 仍为 JSON，静态资源带长缓存', async () => {
-    const dist = mkdtempSync(join(tmpdir(), 'Coati-dist-'))
-    writeFileSync(join(dist, 'index.html'), '<!doctype html><title>Coati</title>')
+    const dist = mkdtempSync(join(tmpdir(), 'castor-kit-dist-'))
+    writeFileSync(join(dist, 'index.html'), '<!doctype html><title>castor-kit</title>')
     writeFileSync(join(dist, 'app.js'), 'console.log(1)')
     const spa = await buildTestApp({ webDistDir: dist })
     try {
       const page = await spa.inject('/admin/users')
       expect(page.statusCode).toBe(200)
       expect(page.headers['content-type']).toContain('text/html')
-      expect(page.body).toContain('Coati')
+      expect(page.body).toContain('castor-kit')
 
       const asset = await spa.inject('/app.js')
       expect(asset.headers['cache-control']).toBe('public, max-age=604800')

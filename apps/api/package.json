@@ -20,8 +20,9 @@
     "verify": "tsx scripts/verify-feature.ts",
     "lint": "eslint .",
     "gateway:rotate-key": "tsx scripts/rotate-gateway-key.ts",
-    "gateway:legacy-archive": "tsx scripts/legacy-archive.ts",
-    "gateway:legacy-import": "tsx scripts/legacy-import.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "init-ro-role": "tsx scripts/init-ro-role.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts"
   },
   "dependencies": {
     "@fastify/compress": "^9.2.0",
@@ -43,7 +44,18 @@
     "systeminformation": "^5.33.13",
     "undici": "^8.11.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@ai-sdk/anthropic": "^4.0.65",
+    "@ai-sdk/google": "^4.0.82",
+    "@ai-sdk/openai": "^4.0.78",
+    "@ai-sdk/openai-compatible": "^3.0.57",
+    "@aws-sdk/client-s3": "^3.1140.0",
+    "@aws-sdk/s3-request-presigner": "^3.1140.0",
+    "@fastify/rate-limit": "^11.2.0",
+    "ai": "^7.0.116",
+    "file-type": "^22.1.1",
+    "nodemailer": "^10.0.10",
+    "otpauth": "^9.5.2"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
@@ -61,6 +73,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.1",
     "vitest": "^5.0.1",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "@types/nodemailer": "^8.0.2",
+    "ajv": "8.20.0"
   }
 }

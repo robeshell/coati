@@ -39,7 +39,7 @@ export async function executeServerToolResult(
     model,
     protocol: kind.replace('_', '-'),
     reserved_tokens: 20000,
-    expires_at: utcNowIso(new Date(Date.now() + (gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)) + 'Z',
+    expires_at: utcNowIso(new Date(Date.now() + (gateway.options.reservationTtlSeconds ?? reservationTtlSeconds()) * 1000)),
   })
   if (denied)
     throw new GatewayError(

@@ -100,7 +100,7 @@ function summarize(rounds: Round[]) {
   }
 }
 export class CacheTestService {
-  page(owner: number, query: unknown, legacy = false) { return this.repo.page(owner, cacheTestQuery.parse(query), legacy) }
+  page(owner: number, query: unknown, alternate = false) { return this.repo.page(owner, cacheTestQuery.parse(query), alternate) }
   get(owner: number, id: number) { return this.repo.get(owner, id) }
   remove(owner: number, id: number) { return this.repo.remove(owner, id) }
 
