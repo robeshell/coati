@@ -122,6 +122,16 @@ describe('API tokens: using', () => {
     expect(created.cookies.find((c) => c.name === 'coati_session')).toBeUndefined()
   })
 
+  it('menuPermissionRequired 保护的网关控制台接口同样只认 scopes：超级管理员的 token 也不例外', async () => {
+    // Regression: these routes used to check only the creator's roles, so any super admin token passed
+    const unrelated = (await createToken(admin, ['system_users'])).json().token
+    expect((await bearer(unrelated, { url: '/api/admin/gateway/upstreams' })).statusCode).toBe(403)
+    expect((await bearer(unrelated, { url: '/api/admin/gateway/keys' })).statusCode).toBe(403)
+    const granted = (await createToken(admin, ['gateway_upstreams'])).json().token
+    expect((await bearer(granted, { url: '/api/admin/gateway/upstreams' })).statusCode).toBe(200)
+    expect((await bearer(granted, { url: '/api/admin/gateway/keys' })).statusCode).toBe(403)
+  })
+
   it('账号与安全类接口一律拒绝 token（即使 token 拥有全部权限）', async () => {
     const all = ['system_users', 'system_users_edit', 'system_settings', 'system_settings_edit', 'system_webhooks', 'system_webhooks_add', 'system_api_tokens']
     await ensureMenus(handle, all)

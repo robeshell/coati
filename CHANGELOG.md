@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- Routes guarded by `menuPermissionRequired` (the gateway console: upstream credentials, routes, keys and so on) now
+  honour API token scopes. They checked only the token creator's roles, so a super admin's API token could call all of
+  them whatever scopes it was granted.
+
 ## 0.1.0
 
 Initial public release of Coati, an enterprise model gateway.
